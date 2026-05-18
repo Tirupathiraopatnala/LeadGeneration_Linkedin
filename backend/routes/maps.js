@@ -1,7 +1,12 @@
 import { Router } from 'express';
-import { runMapsScrape } from '../services/apify-maps.js';
+import { runMapsScrape, abortRun } from '../services/apify-maps.js';
 
 export const mapsRouter = Router();
+
+// In-flight scrape sessions keyed by the frontend's clientRunId.
+// Lets POST /stop find and abort the Apify runs spawned by an
+// /scrape SSE handler the HTTP layer can no longer reach directly.
+const activeRuns = new Map(); // clientRunId -> { cancelled, apifyRunIds, apifyKey }
 
 function send(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -83,18 +88,22 @@ mapsRouter.get('/zipcodes', async (req, res) => {
 // client disconnects, the in-flight Apify run is aborted so we don't
 // burn credits on results no one will see.
 mapsRouter.post('/scrape', async (req, res) => {
-  const { searches, apifyKey, maxResults = 20 } = req.body;
+  const { searches, apifyKey, maxResults = 20, clientRunId } = req.body;
 
   if (!apifyKey) return res.status(400).json({ error: 'Apify API key required' });
   if (!searches?.length) return res.status(400).json({ error: 'No searches provided' });
+  if (!clientRunId) return res.status(400).json({ error: 'clientRunId required' });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  let cancelled = false;
-  req.on('close', () => { cancelled = true; });
+  // Register this run so POST /stop can find and abort it.
+  const ctx = { cancelled: false, apifyRunIds: new Set(), apifyKey };
+  activeRuns.set(clientRunId, ctx);
+
+  req.on('close', () => { ctx.cancelled = true; });
 
   const allLeads = [];
 
@@ -102,7 +111,7 @@ mapsRouter.post('/scrape', async (req, res) => {
     send(res, 'start', { total: searches.length });
 
     for (let si = 0; si < searches.length; si++) {
-      if (cancelled) break;
+      if (ctx.cancelled) break;
 
       const search = searches[si];
       const { business, city, countryCode, zips } = search;
@@ -123,7 +132,7 @@ mapsRouter.post('/scrape', async (req, res) => {
       });
 
       for (const task of tasks) {
-        if (cancelled) break;
+        if (ctx.cancelled) break;
 
         try {
           let result;
@@ -137,9 +146,10 @@ mapsRouter.post('/scrape', async (req, res) => {
                 countryCode:               countryCode.toLowerCase(),
               },
               {
-                isCancelled: () => cancelled,
+                isCancelled: () => ctx.cancelled,
                 onProgress: (update) => {
                   if (update.stage === 'started') {
+                    ctx.apifyRunIds.add(update.runId);
                     send(res, 'progress', { message: `Started Apify run for "${task.query}" (id ${update.runId})` });
                   } else if (update.stage === 'running') {
                     send(res, 'progress', {
@@ -150,6 +160,7 @@ mapsRouter.post('/scrape', async (req, res) => {
                   } else if (update.stage === 'poll-error') {
                     send(res, 'warning', { message: `Apify poll error: ${update.message}` });
                   } else if (update.stage === 'done') {
+                    ctx.apifyRunIds.delete(update.runId);
                     send(res, 'progress', { message: `Apify finished for "${task.query}" — ${update.itemCount} raw results in ${update.runtimeSecs}s` });
                   }
                 },
@@ -157,7 +168,7 @@ mapsRouter.post('/scrape', async (req, res) => {
             );
           } catch (err) {
             // `Cancelled by client` is benign — fall through to outer loop break.
-            if (cancelled) break;
+            if (ctx.cancelled) break;
             send(res, 'warning', { message: `Error for "${task.query}": ${err.message}` });
             continue;
           }
@@ -207,8 +218,8 @@ mapsRouter.post('/scrape', async (req, res) => {
       }
     }
 
-    if (cancelled) {
-      send(res, 'warning', { message: 'Scrape cancelled — client disconnected' });
+    if (ctx.cancelled) {
+      send(res, 'warning', { message: 'Scrape cancelled' });
     } else {
       send(res, 'complete', {
         totalLeads: allLeads.length,
@@ -219,6 +230,25 @@ mapsRouter.post('/scrape', async (req, res) => {
   } catch (err) {
     send(res, 'error', { message: err.message });
   } finally {
+    activeRuns.delete(clientRunId);
     res.end();
   }
+});
+
+// ── Stop an in-flight scrape ──────────────────────────────────────────
+mapsRouter.post('/stop', async (req, res) => {
+  const { clientRunId } = req.body || {};
+  if (!clientRunId) return res.status(400).json({ error: 'clientRunId required' });
+
+  const ctx = activeRuns.get(clientRunId);
+  if (!ctx) return res.json({ ok: true, message: 'No active run' });
+
+  ctx.cancelled = true;
+
+  // Eagerly abort the Apify side so credits stop burning. The SSE
+  // handler will also notice ctx.cancelled and bail out of its loop.
+  const ids = [...ctx.apifyRunIds];
+  await Promise.all(ids.map(id => abortRun(ctx.apifyKey, id)));
+
+  res.json({ ok: true, aborted: ids.length });
 });

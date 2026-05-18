@@ -116,6 +116,7 @@ function addSearch() {
           searches: mapsSearches,
           apifyKey,
           maxResults,
+          clientRunId: newRunId,
         }),
       });
 
@@ -173,6 +174,24 @@ function addSearch() {
     } catch (err) {
       setStatus('error');
       addLog(`Connection error: ${err.message}`, 'error');
+    }
+  }
+
+  async function stopScrape() {
+    if (!activeMapsRunId) return;
+    addLog('Stopping scrape…', 'warn');
+    setStatus('idle');
+    completeMapsRun(activeMapsRunId);
+    try {
+      const r = await fetch('/api/maps/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientRunId: activeMapsRunId }),
+      });
+      const data = await r.json().catch(() => ({}));
+      addLog(`Stop acknowledged — ${data.aborted ?? 0} Apify run(s) aborted`, 'warn');
+    } catch (err) {
+      addLog(`Stop failed: ${err.message}`, 'error');
     }
   }
 
@@ -251,7 +270,7 @@ function addSearch() {
               <span>▶</span> RUN SCRAPER
             </button>
           ) : (
-            <button onClick={() => setStatus('idle')} style={{ padding: '10px 22px', background: 'var(--warn)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+            <button onClick={stopScrape} style={{ padding: '10px 22px', background: 'var(--warn)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer' }}>
               ■ STOP
             </button>
           )}

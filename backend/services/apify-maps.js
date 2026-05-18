@@ -5,11 +5,18 @@
 const APIFY_BASE = 'https://api.apify.com/v2';
 const ACTOR_ID   = 'compass~crawler-google-places';
 
-const POLL_INTERVAL_MS = 5_000;
 const DEFAULT_MAX_WAIT = 30 * 60 * 1000; // 30 min
 
 const TERMINAL_OK    = new Set(['SUCCEEDED']);
 const TERMINAL_FAIL  = new Set(['FAILED', 'TIMED-OUT', 'ABORTED']);
+
+// Adaptive poll cadence: tight feedback for short queries, easier on
+// Apify for the long-running ones.
+function pollDelayFor(elapsedMs) {
+  if (elapsedMs <  30_000) return 2_000;
+  if (elapsedMs < 120_000) return 5_000;
+  return 10_000;
+}
 
 async function apifyFetch(url, init = {}) {
   const res = await fetch(url, init);
@@ -65,8 +72,7 @@ export async function abortRun(apifyKey, runId) {
 export async function runMapsScrape(apifyKey, input, {
   onProgress,
   isCancelled,
-  pollIntervalMs = POLL_INTERVAL_MS,
-  maxWaitMs      = DEFAULT_MAX_WAIT,
+  maxWaitMs = DEFAULT_MAX_WAIT,
 } = {}) {
   const { runId, datasetId } = await startMapsRun(apifyKey, input);
   onProgress?.({ stage: 'started', runId, datasetId });
@@ -81,7 +87,7 @@ export async function runMapsScrape(apifyKey, input, {
       throw new Error('Cancelled by client');
     }
 
-    await new Promise(r => setTimeout(r, pollIntervalMs));
+    await new Promise(r => setTimeout(r, pollDelayFor(Date.now() - startTs)));
 
     let status;
     try {
