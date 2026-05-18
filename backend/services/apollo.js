@@ -44,10 +44,71 @@ export async function enrichCompany(domain, apolloKey) {
   return apolloRequest(`/api/v1/organizations/enrich?domain=${encodeURIComponent(domain)}`, 'GET', null, apolloKey);
 }
 
-export async function matchPerson(firstName, lastName, organizationName, apolloKey) {
-  return apolloRequest('/api/v1/people/match', 'POST', {
-    first_name: firstName,
-    last_name: lastName,
-    organization_name: organizationName,
-  }, apolloKey);
+// Detect Apollo's locked-email sentinel ("email_not_unlocked@domain.com")
+// Returned on free / out-of-credit accounts.
+function isLockedEmail(email) {
+  return !!email && /email_not_unlocked@/i.test(email);
+}
+
+function splitName(full) {
+  if (!full) return { firstName: '', lastName: '' };
+  const parts = full.trim().split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+// Enrich a person via Apollo `/people/match`.
+// Prefers LinkedIn URL (highest match accuracy), falls back to name + company.
+// On free / no-credit accounts, `email` may be locked — caller can read
+// `emailLocked` to surface this in the UI.
+export async function matchPerson({ linkedinUrl, name, firstName, lastName, organizationName, domain }, apolloKey) {
+  if (!firstName && !lastName && name) {
+    ({ firstName, lastName } = splitName(name));
+  }
+
+  const body = {
+    reveal_personal_emails: true,
+    reveal_phone_number: true,
+  };
+  if (linkedinUrl) body.linkedin_url = linkedinUrl;
+  if (firstName) body.first_name = firstName;
+  if (lastName) body.last_name = lastName;
+  if (organizationName) body.organization_name = organizationName;
+  if (domain) body.domain = domain;
+
+  // Need at least one strong identifier
+  if (!linkedinUrl && !((firstName || lastName) && (organizationName || domain))) {
+    return null;
+  }
+
+  const data = await apolloRequest('/api/v1/people/match', 'POST', body, apolloKey);
+  const person = data?.person;
+  if (!person) return null;
+
+  const rawEmail = person.email || '';
+  const emailLocked = isLockedEmail(rawEmail);
+  const personalEmail = (person.personal_emails || []).find(e => !isLockedEmail(e)) || '';
+  const workEmail = !emailLocked ? rawEmail : '';
+
+  const phone = person.phone_numbers?.[0]?.sanitized_number
+    || person.phone_numbers?.[0]?.raw_number
+    || person.organization?.phone
+    || '';
+
+  return {
+    apolloPersonId: person.id || '',
+    email: workEmail || personalEmail || '',
+    emailType: workEmail ? 'work' : (personalEmail ? 'personal' : ''),
+    emailStatus: person.email_status || '',
+    emailLocked,
+    personalEmails: (person.personal_emails || []).filter(e => !isLockedEmail(e)),
+    phone,
+    title: person.title || '',
+    seniority: person.seniority || '',
+    departments: person.departments || [],
+    city: person.city || '',
+    state: person.state || '',
+    country: person.country || '',
+    linkedinUrl: person.linkedin_url || '',
+  };
 }

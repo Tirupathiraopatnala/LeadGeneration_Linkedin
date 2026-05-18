@@ -7,6 +7,7 @@ import {
   getCompanyDetails,
 } from '../services/connectsafely.js';
 import { screenComments, deepQualify } from '../services/azureOpenAI.js';
+import { matchPerson } from '../services/apollo.js';
 
 export const pipelineRouter = Router();
 
@@ -17,7 +18,7 @@ function send(res, event, data) {
 }
 
 pipelineRouter.post('/run', async (req, res) => {
-  const { connectSafelyKey, accountId, keywords, pipelineSettings = {} } = req.body;
+  const { connectSafelyKey, accountId, keywords, pipelineSettings = {}, apolloKey } = req.body;
 
   if (!connectSafelyKey || !accountId || !keywords?.length) {
     return res.status(400).json({ error: 'Missing connectSafelyKey, accountId, or keywords' });
@@ -325,7 +326,41 @@ pipelineRouter.post('/run', async (req, res) => {
             companyWebsite:     lead.company?.websiteUrl || '',
             companyLocation:    lead.company?.location || '',
             companyLinkedinUrl: lead.company?.linkedinUrl || '',
+            // Contact (filled by Apollo enrichment below if apolloKey present)
+            email:              '',
+            emailType:          '',
+            emailStatus:        '',
+            emailLocked:        false,
+            phone:              '',
+            apolloPersonId:     '',
           };
+
+          // ── Apollo /people/match enrichment ────────────────────────
+          // Tries LinkedIn URL first (best match), falls back to name + company.
+          // On Apollo free tier, emails come back locked as `emailLocked: true`.
+          if (apolloKey) {
+            try {
+              const enrich = await matchPerson({
+                linkedinUrl:      qualifiedLead.profileUrl,
+                name:             qualifiedLead.commenterName,
+                organizationName: qualifiedLead.currentCompany || qualifiedLead.companyName,
+                domain:           qualifiedLead.companyWebsite
+                                    ? qualifiedLead.companyWebsite.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+                                    : undefined,
+              }, apolloKey);
+
+              if (enrich) {
+                qualifiedLead.email          = enrich.email;
+                qualifiedLead.emailType      = enrich.emailType;
+                qualifiedLead.emailStatus    = enrich.emailStatus;
+                qualifiedLead.emailLocked    = enrich.emailLocked;
+                qualifiedLead.phone          = enrich.phone;
+                qualifiedLead.apolloPersonId = enrich.apolloPersonId;
+              }
+            } catch (err) {
+              send(res, 'warning', { message: `Apollo enrich failed for ${qualifiedLead.commenterName}: ${err.message}` });
+            }
+          }
 
           // Final dedup before adding
           const alreadyExists = allLeads.some(l =>

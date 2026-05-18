@@ -27,6 +27,10 @@ exportRouter.post('/excel', (req, res) => {
     const leadsData = leads.map((l, i) => ({
       '#': i + 1,
       'Name': l.commenterName || '',
+      'Email': l.email || '',
+      'Email Status': l.emailLocked ? 'locked (upgrade Apollo)' : (l.emailStatus || (l.email ? 'verified' : '')),
+      'Email Type': l.emailType || '',
+      'Phone': l.phone || '',
       'Current Role': l.currentRole || l.designation || '',
       'Current Company': l.currentCompany || l.companyName || '',
       'Industry': l.companyIndustry || '',
@@ -52,6 +56,10 @@ exportRouter.post('/excel', (req, res) => {
     ws1['!cols'] = [
       { wch: 4 },   // #
       { wch: 25 },  // Name
+      { wch: 35 },  // Email
+      { wch: 22 },  // Email Status
+      { wch: 12 },  // Email Type
+      { wch: 18 },  // Phone
       { wch: 30 },  // Role
       { wch: 30 },  // Company
       { wch: 20 },  // Industry
@@ -114,6 +122,7 @@ exportRouter.post('/excel', (req, res) => {
     const decisionLevels = {};
     const companySizes = {};
     const scoreDist = { '6-7': 0, '8-9': 0, '10': 0 };
+    let emailUnlocked = 0, emailLocked = 0, phoneFound = 0;
 
     for (const l of leads) {
       if (l.intentLevel) intentCounts[l.intentLevel] = (intentCounts[l.intentLevel] || 0) + 1;
@@ -124,12 +133,22 @@ exportRouter.post('/excel', (req, res) => {
       if (score >= 10) scoreDist['10']++;
       else if (score >= 8) scoreDist['8-9']++;
       else if (score >= 6) scoreDist['6-7']++;
+      if (l.email && !l.emailLocked) emailUnlocked++;
+      else if (l.emailLocked) emailLocked++;
+      if (l.phone) phoneFound++;
     }
+
+    const pct = (n) => leads.length ? `${Math.round((n / leads.length) * 100)}%` : '0%';
 
     const summaryRows = [
       ['LEAD GENERATION SUMMARY', ''],
       ['Generated At', new Date().toLocaleString()],
       ['Total Qualified Leads', leads.length],
+      ['', ''],
+      ['APOLLO ENRICHMENT', ''],
+      ['Emails unlocked', `${emailUnlocked} (${pct(emailUnlocked)})`],
+      ['Emails locked (need Apollo credits)', `${emailLocked} (${pct(emailLocked)})`],
+      ['Phone numbers found', `${phoneFound} (${pct(phoneFound)})`],
       ['', ''],
       ['INTENT LEVEL BREAKDOWN', ''],
       ['High Intent', intentCounts.high || 0],

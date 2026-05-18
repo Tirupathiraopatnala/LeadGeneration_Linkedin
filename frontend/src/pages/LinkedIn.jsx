@@ -52,6 +52,7 @@ export default function LinkedIn() {
     abortRef, addLog,
     pipelineRuns, activeRunId, setActiveRunId,
     addPipelineRun, addLeadToRun, completeRun, deleteRun,
+    apolloKey,
   } = useSettings();
 
   const [activeTab, setActiveTab] = useState('KEYWORDS');
@@ -116,7 +117,7 @@ export default function LinkedIn() {
       const res = await fetch('/api/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectSafelyKey, accountId, keywords, pipelineSettings }),
+        body: JSON.stringify({ connectSafelyKey, accountId, keywords, pipelineSettings, apolloKey }),
         signal: controller.signal,
       });
 
@@ -649,6 +650,23 @@ function LeadRow({ lead }) {
                   <Row k="LinkedIn"  v={lead.companyLinkedinUrl} isLink />
                 </p>
               </InfoBlock>
+              <InfoBlock title="CONTACT">
+                <p style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.7 }}>
+                  {lead.email ? (
+                    <Row k="Email" v={lead.email} copyable />
+                  ) : lead.emailLocked ? (
+                    <span style={{ display: 'flex', gap: 8, marginBottom: 2 }}>
+                      <span style={{ color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 10, width: 70, flexShrink: 0 }}>Email</span>
+                      <span style={{ color: '#ffb900', fontSize: 12 }}>🔒 locked — needs Apollo credits</span>
+                    </span>
+                  ) : (
+                    <Row k="Email" v="—" />
+                  )}
+                  <Row k="Phone" v={lead.phone} copyable />
+                  <Row k="Source" v={lead.emailType ? `Apollo (${lead.emailType})` : ''} />
+                </p>
+              </InfoBlock>
+
               <InfoBlock title="SOURCE">
                 <Row k="Keyword" v={lead.keyword} />
               </InfoBlock>
@@ -682,12 +700,25 @@ function LeadRow({ lead }) {
   );
 }
 
-function Row({ k, v, isLink }) {
+function Row({ k, v, isLink, copyable }) {
+  const [copied, setCopied] = useState(false);
   if (!v) return null;
+
+  function copy(e) {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(v);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
+
   return (
     <span style={{ display: 'flex', gap: 8, marginBottom: 2 }}>
       <span style={{ color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 10, width: 70, flexShrink: 0 }}>{k}</span>
-      {isLink ? <a href={v.startsWith('http') ? v : `https://${v}`} target="_blank" rel="noreferrer" style={{ color: 'var(--info)', fontSize: 12 }}>{v}</a> : <span>{v}</span>}
+      {isLink
+        ? <a href={v.startsWith('http') ? v : `https://${v}`} target="_blank" rel="noreferrer" style={{ color: 'var(--info)', fontSize: 12 }}>{v}</a>
+        : copyable
+          ? <span onClick={copy} title="Click to copy" style={{ cursor: 'pointer', color: copied ? 'var(--accent)' : 'var(--text)', fontSize: 12, userSelect: 'all' }}>{copied ? '✓ copied' : v}</span>
+          : <span>{v}</span>}
     </span>
   );
 }
