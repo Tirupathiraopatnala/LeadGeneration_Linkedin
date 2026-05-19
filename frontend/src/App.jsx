@@ -4,11 +4,13 @@ import LinkedIn from "./pages/LinkedIn";
 import Settings from "./pages/Settings";
 import Outreach from "./pages/Outreach";
 import Maps from "./pages/Maps";
+import HowItWorks from "./pages/HowItWorks";
 
 const NAV_ITEMS = [
   { to: "/",         label: "LinkedIn",  icon: "in" },
   { to: "/outreach", label: "Apollo",  icon: "🎯" },
   { to: "/maps",     label: "Maps",      icon: "🗺" },
+  { to: "/guide",    label: "Guide",     icon: "?" },
   { to: "/settings", label: "Settings",  icon: "⚙" },
 ];
 
@@ -105,6 +107,7 @@ function App() {
             <Route path="/"         element={<LinkedIn />} />
             <Route path="/outreach" element={<Outreach />} />
             <Route path="/maps"     element={<Maps />} />
+            <Route path="/guide"    element={<HowItWorks />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </div>
