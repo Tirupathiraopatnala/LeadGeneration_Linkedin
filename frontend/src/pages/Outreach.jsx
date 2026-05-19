@@ -58,6 +58,8 @@ export default function Outreach() {
     completeOutreachRun, deleteOutreachRun,
     targetLocations, setTargetLocations,
     employeeRanges, setEmployeeRanges,
+    targetIndustries, setTargetIndustries,
+    targetTechnologies, setTargetTechnologies,
     outreachStatus: status, setOutreachStatus: setStatus,
     outreachLogs: logs, setOutreachLogs: setLogs,
     addOutreachLog: addLog,
@@ -80,11 +82,11 @@ export default function Outreach() {
   const [filterSearch, setFilterSearch] = useState('');
 
   const [productInput, setProductInput] = useState(productDescription);
-  const [audienceInput, setAudienceInput] = useState(targetAudience);
   const [titlesInput, setTitlesInput] = useState(targetJobTitles);
-  const [scoreInput, setScoreInput] = useState(minCompanyScore);
   const [locationsInput, setLocationsInput] = useState(targetLocations);
   const [rangesInput, setRangesInput] = useState(employeeRanges);
+  const [industriesInput, setIndustriesInput] = useState(targetIndustries || []);
+  const [technologiesInput, setTechnologiesInput] = useState(targetTechnologies || []);
 
   const activeRun = outreachRuns.find(r => r.runId === activeOutreachRunId) || outreachRuns[outreachRuns.length - 1];
   const companies = activeRun?.companies || [];
@@ -118,18 +120,23 @@ export default function Outreach() {
 
   function saveConfig() {
     setProductDescription(productInput.trim());
-    setTargetAudience(audienceInput.trim());
     setTargetJobTitles(titlesInput.trim());
-    setMinCompanyScore(Number(scoreInput));
     setTargetLocations(locationsInput.trim());
     setEmployeeRanges(rangesInput);
+    setTargetIndustries(industriesInput);
+    setTargetTechnologies(technologiesInput);
     setConfigSaved(true);
     setTimeout(() => setConfigSaved(false), 2000);
   }
 
   async function runDiscovery() {
     if (!apolloKey) { addLog('Apollo API key missing — go to Settings', 'error'); return; }
-    if (!productDescription || !targetAudience) { addLog('Product description and target audience required — save config first', 'error'); return; }
+    const inds  = industriesInput.length    ? industriesInput    : targetIndustries;
+    const techs = technologiesInput.length  ? technologiesInput  : targetTechnologies;
+    if (!inds.length && !techs.length && !(targetLocations || locationsInput)) {
+      addLog('Pick at least one filter (industry, technology, or location) and save', 'error');
+      return;
+    }
 
     setStatus('discovering');
     setLogs([]);
@@ -142,7 +149,14 @@ export default function Outreach() {
       const res = await fetch('/api/outreach/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apolloKey, targetAudience: targetAudience || audienceInput, productDescription: productDescription || productInput, minCompanyScore: minCompanyScore || scoreInput, targetLocations: targetLocations || locationsInput, employeeRanges: employeeRanges?.length ? employeeRanges : rangesInput, clientRunId: newRunId }),
+        body: JSON.stringify({
+          apolloKey,
+          industries:      inds,
+          technologies:    techs,
+          targetLocations: (targetLocations || locationsInput || '').split(',').map(s => s.trim()).filter(Boolean),
+          employeeRanges:  employeeRanges?.length ? employeeRanges : rangesInput,
+          clientRunId:     newRunId,
+        }),
       });
 
       if (!res.ok) { addLog(`Server error: ${await res.text()}`, 'error'); setStatus('error'); return; }
@@ -322,25 +336,19 @@ export default function Outreach() {
                   </div>
                 </div>
                 <div style={{ padding: '24px' }}>
-                  <ConfigField label="PRODUCT DESCRIPTION" hint="What does your product/service do?">
-                    <textarea value={productInput} onChange={e => setProductInput(e.target.value)} placeholder="e.g. We help B2B companies automate their sales outreach using AI..." rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }} />
+
+                  <ConfigField label="TARGET INDUSTRIES" hint="Pick the industries your buyers are in. Apollo will return only companies classified in these.">
+                    <ChipPicker options={INDUSTRY_OPTIONS} selected={industriesInput} onChange={setIndustriesInput} />
                   </ConfigField>
-                  <ConfigField label="TARGET AUDIENCE" hint="Who are your ideal customers?" style={{ marginTop: 20 }}>
-                    <textarea value={audienceInput} onChange={e => setAudienceInput(e.target.value)} placeholder="e.g. SaaS companies in the US with 10-200 employees that need marketing automation..." rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }} />
+
+                  <ConfigField label="TECH STACK" hint="Pick tools the target company should be using. Pulls from Apollo's technographic data (paid feature)." style={{ marginTop: 20 }}>
+                    <ChipPicker options={TECH_OPTIONS} selected={technologiesInput} onChange={setTechnologiesInput} />
                   </ConfigField>
-                  <ConfigField label="TARGET JOB TITLES" hint="Comma separated — who to reach out to" style={{ marginTop: 20 }}>
-                    <input type="text" value={titlesInput} onChange={e => setTitlesInput(e.target.value)} placeholder="CEO, Founder, CTO, VP of Engineering, Head of Product" style={inputStyle} />
-                  </ConfigField>
-                  <ConfigField label="MINIMUM COMPANY SCORE" hint="Only keep companies scoring this or above (1–10)" style={{ marginTop: 20 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <input type="range" min={1} max={10} step={1} value={scoreInput} onChange={e => setScoreInput(e.target.value)} style={{ flex: 1, accentColor: 'var(--accent)' }} />
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 700, color: 'var(--accent)', width: 24 }}>{scoreInput}</span>
-                    </div>
-                    <ScoreRubric current={Number(scoreInput)} />
-                  </ConfigField>
-                  <ConfigField label="TARGET LOCATIONS" hint="Comma separated countries or regions" style={{ marginTop: 20 }}>
+
+                  <ConfigField label="TARGET LOCATIONS" hint="Comma separated countries, states, or cities" style={{ marginTop: 20 }}>
                     <input type="text" value={locationsInput} onChange={e => setLocationsInput(e.target.value)} placeholder="United States, United Kingdom, Canada" style={inputStyle} />
                   </ConfigField>
+
                   <ConfigField label="COMPANY SIZE" hint="Select all sizes you want to target" style={{ marginTop: 20 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
                       {[{ code: '1,10', label: '1–10' }, { code: '11,50', label: '11–50' }, { code: '51,200', label: '51–200' }, { code: '201,500', label: '201–500' }, { code: '501,1000', label: '501–1000' }, { code: '1001,5000', label: '1001–5000' }, { code: '5001,10000', label: '5001–10000' }, { code: '10001', label: '10001+' }].map(({ code, label }) => {
@@ -350,14 +358,23 @@ export default function Outreach() {
                     </div>
                     <div style={{ marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>{rangesInput.length} size{rangesInput.length !== 1 ? 's' : ''} selected</div>
                   </ConfigField>
+
+                  <ConfigField label="TARGET JOB TITLES" hint="Used by FIND CONTACTS to narrow Hunter results" style={{ marginTop: 20 }}>
+                    <input type="text" value={titlesInput} onChange={e => setTitlesInput(e.target.value)} placeholder="CEO, Founder, CTO, VP of Engineering, Head of Product" style={inputStyle} />
+                  </ConfigField>
+
+                  <ConfigField label="PRODUCT DESCRIPTION" hint="Used later for outreach drafts. Not used for discovery." style={{ marginTop: 20 }}>
+                    <textarea value={productInput} onChange={e => setProductInput(e.target.value)} placeholder="e.g. We help retail and manufacturing companies modernize their data stack with Salesforce, Snowflake, and GenAI..." rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }} />
+                  </ConfigField>
+
                 </div>
               </div>
               <div style={{ padding: '16px 20px', background: 'var(--accent-dim)', border: '1px solid rgba(0,229,160,0.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text2)', lineHeight: 1.8 }}>
                 <div style={{ fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>HOW IT WORKS</div>
-                <div>1. Fill in your product + audience above and save</div>
-                <div>2. Click DISCOVER COMPANIES — finds + scores matching companies via Apollo</div>
+                <div>1. Pick industries + tech stack + location + size above and save</div>
+                <div>2. Click DISCOVER COMPANIES — Apollo returns exact matches, no AI guessing</div>
                 <div>3. Review companies in the COMPANIES tab</div>
-                <div>4. Click FIND CONTACTS — finds decision makers via Hunter</div>
+                <div>4. Click FIND CONTACTS — Hunter finds decision-maker emails</div>
                 <div>5. Review contacts in the LEADS tab and export to Excel</div>
               </div>
             </div>
@@ -373,14 +390,13 @@ export default function Outreach() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
-                      {['COMPANY', 'INDUSTRY', 'EMPLOYEES', 'LOCATION', 'SCORE', 'REASON', 'LINKS'].map(col => (
+                      {['COMPANY', 'INDUSTRY', 'EMPLOYEES', 'LOCATION', 'DESCRIPTION', 'LINKS'].map(col => (
                         <th key={col} style={{ padding: '11px 16px', textAlign: 'left', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500, letterSpacing: '0.1em', color: 'var(--text3)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{col}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {companies.map((company, i) => {
-                      const sc = getScoreColor(company.score);
                       return (
                         <tr key={i} onClick={() => setExpandedCompany(expandedCompany === i ? null : i)} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.1s', cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
@@ -390,11 +406,8 @@ export default function Outreach() {
                           <td style={{ padding: '12px 16px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{company.industry || '—'}</td>
                           <td style={{ padding: '12px 16px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{company.employees || '—'}</td>
                           <td style={{ padding: '12px 16px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{company.location || '—'}</td>
-                          <td style={{ padding: '12px 16px' }}>
-                            <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, fontFamily: 'var(--font-mono)' }}>{company.score}/10</span>
-                          </td>
-                          <td style={{ padding: '12px 16px', color: 'var(--text2)', fontSize: 12, maxWidth: 250 }}>
-                            <div style={{ overflow: expandedCompany === i ? 'visible' : 'hidden', textOverflow: expandedCompany === i ? 'unset' : 'ellipsis', whiteSpace: expandedCompany === i ? 'normal' : 'nowrap', lineHeight: 1.5 }}>{company.scoreReason}</div>
+                          <td style={{ padding: '12px 16px', color: 'var(--text2)', fontSize: 12, maxWidth: 320 }}>
+                            <div style={{ overflow: expandedCompany === i ? 'visible' : 'hidden', textOverflow: expandedCompany === i ? 'unset' : 'ellipsis', whiteSpace: expandedCompany === i ? 'normal' : 'nowrap', lineHeight: 1.5 }}>{company.description || '—'}</div>
                           </td>
                           <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
                             <div style={{ display: 'flex', gap: 6 }}>
@@ -406,7 +419,7 @@ export default function Outreach() {
                       );
                     })}
                     {status === 'discovering' && (
-                      <tr><td colSpan={7} style={{ padding: '16px', textAlign: 'center' }}><div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 12 }}><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block', fontSize: 16 }}>◌</span> Discovering companies…</div></td></tr>
+                      <tr><td colSpan={6} style={{ padding: '16px', textAlign: 'center' }}><div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 12 }}><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block', fontSize: 16 }}>◌</span> Discovering companies…</div></td></tr>
                     )}
                   </tbody>
                 </table>
@@ -581,34 +594,66 @@ export default function Outreach() {
   );
 }
 
-// Mirrors the rubric the AI scorer uses server-side. When the user
-// drags the slider the matching tier highlights so they can see what
-// they're filtering for instead of guessing what "7" means.
-const SCORE_TIERS = [
-  { range: [1, 3],  label: 'Weak fit',     desc: 'Wrong industry / size / outside audience' },
-  { range: [4, 5],  label: 'Borderline',   desc: 'Some signal but several mismatches' },
-  { range: [6, 7],  label: 'Decent fit',   desc: 'Matches ICP on industry OR size' },
-  { range: [8, 9],  label: 'Strong fit',   desc: 'Matches on industry AND size AND audience' },
-  { range: [10, 10],label: 'Perfect fit',  desc: 'Textbook customer' },
+// Curated industry list. Sent verbatim as Apollo keyword tags — clean,
+// single-word inputs match Apollo's industry classification well.
+const INDUSTRY_OPTIONS = [
+  'Retail', 'Manufacturing', 'Healthcare', 'Pharmaceuticals',
+  'Financial Services', 'Banking', 'Insurance',
+  'Information Technology', 'Software', 'Telecommunications',
+  'Marketing & Advertising', 'Media', 'Real Estate', 'Construction',
+  'Education', 'Hospitality', 'Restaurants', 'Logistics & Supply Chain',
+  'Energy & Utilities', 'Consumer Goods', 'Automotive',
+  'Aerospace & Defense', 'Legal Services', 'Professional Services',
+  'Government', 'Non-profit', 'Agriculture', 'Wholesale',
 ];
 
-function ScoreRubric({ current }) {
+// Apollo technology UIDs (slugs). Sent via currently_using_any_of_technology_uids.
+// If a slug doesn't match Apollo's taxonomy, that filter will return zero
+// results — verify with Apollo's UI and update here if needed.
+const TECH_OPTIONS = [
+  'salesforce', 'hubspot', 'microsoft-dynamics', 'servicenow',
+  'sap', 'oracle', 'workday', 'netsuite',
+  'snowflake', 'databricks', 'amazon-web-services', 'microsoft-azure',
+  'google-cloud', 'shopify', 'magento', 'bigcommerce',
+  'wordpress', 'tableau', 'microsoft-power-bi', 'marketo',
+  'pardot', 'slack', 'zendesk', 'jira', 'github',
+];
+
+function ChipPicker({ options, selected, onChange }) {
+  function toggle(value) {
+    onChange(selected.includes(value) ? selected.filter(v => v !== value) : [...selected, value]);
+  }
   return (
-    <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.6 }}>
-      <div style={{ color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 6 }}>SCORING RUBRIC</div>
-      {SCORE_TIERS.map(({ range, label, desc }) => {
-        const isActive = current >= range[0] && current <= range[1];
-        const isThresholdOrAbove = current <= range[1];
-        return (
-          <div key={label} style={{ display: 'flex', gap: 10, padding: '3px 0', color: isActive ? 'var(--accent)' : isThresholdOrAbove ? 'var(--text2)' : 'var(--text3)', opacity: isActive ? 1 : isThresholdOrAbove ? 0.85 : 0.5 }}>
-            <span style={{ width: 32, fontWeight: 700 }}>{range[0] === range[1] ? `${range[0]}` : `${range[0]}–${range[1]}`}</span>
-            <span style={{ width: 90, fontWeight: 700 }}>{label}</span>
-            <span style={{ fontWeight: 400 }}>{desc}</span>
-          </div>
-        );
-      })}
-      <div style={{ marginTop: 6, color: 'var(--text3)' }}>Threshold = <strong style={{ color: 'var(--accent)' }}>{current}</strong> → keep companies scoring {current} or higher. Recommended starting point: <strong>7</strong>.</div>
-    </div>
+    <>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+        {options.map(opt => {
+          const isSelected = selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              onClick={() => toggle(opt)}
+              style={{
+                padding: '5px 11px',
+                borderRadius: 20,
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+                cursor: 'pointer',
+                transition: 'all 0.12s',
+                background: isSelected ? 'var(--accent-dim)' : 'var(--surface2)',
+                color: isSelected ? 'var(--accent)' : 'var(--text3)',
+                border: isSelected ? '1px solid rgba(0,229,160,0.3)' : '1px solid var(--border)',
+                fontWeight: isSelected ? 700 : 400,
+              }}
+            >
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>
+        {selected.length} selected
+      </div>
+    </>
   );
 }
 

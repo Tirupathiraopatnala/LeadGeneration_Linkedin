@@ -2,14 +2,6 @@
 // non-technical sales users so they can pick the right tool without
 // having to read source code or remember internal jargon.
 
-const SCORE_TIERS = [
-  { range: '1–3',  label: 'Weak fit',     desc: 'Wrong industry, size, or outside audience' },
-  { range: '4–5',  label: 'Borderline',   desc: 'Some signal but several mismatches' },
-  { range: '6–7',  label: 'Decent fit',   desc: 'Matches ICP on industry OR size' },
-  { range: '8–9',  label: 'Strong fit',   desc: 'Matches on industry AND size AND audience' },
-  { range: '10',   label: 'Perfect fit',  desc: 'Textbook customer' },
-];
-
 const INTENT_TIERS = [
   { level: 'HIGH',   color: '#00e5a0', desc: 'Explicit pain point or buying language in the comment' },
   { level: 'MEDIUM', color: '#ffb900', desc: 'Curiosity or evaluation questions, no clear pain yet' },
@@ -112,24 +104,27 @@ export default function HowItWorks() {
         {/* ── Apollo ──────────────────────────────────────────────── */}
         <Section title="2. Apollo — ICP-driven prospecting" badge="🎯" badgeStyle={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.3)', color: 'var(--accent)' }}>
           <Block label="What it does">
-            Searches Apollo's company database for companies that match your <strong>ideal customer
-            profile (ICP)</strong>, scores each one with AI, then finds decision-maker emails at
-            the keepers via Hunter.io.
+            Searches Apollo's company database for companies that match your
+            <strong> ideal customer profile (ICP)</strong> using deterministic filters —
+            industry, tech stack, location, employee size — then finds decision-maker
+            emails at each match via Hunter.io. No AI guessing; same inputs always
+            return the same companies.
           </Block>
 
           <Block label="Best for">
-            When you know what your buyer LOOKS LIKE (industry + size + geography) more than you
-            know what they SAY. <strong>Higher volume, lower per-lead intent</strong> than LinkedIn.
-            Good for filling the top of the funnel.
+            When you know what your buyer LOOKS LIKE (industry + size + geography + tools they use)
+            more than you know what they SAY. <strong>Higher volume, lower per-lead intent</strong>
+            than LinkedIn. Good for filling the top of the funnel.
           </Block>
 
           <Block label="What you give it">
             <ul style={ulStyle}>
-              <li><Code>PRODUCT DESCRIPTION</Code> — 1–2 sentences about what you sell.</li>
-              <li><Code>TARGET AUDIENCE</Code> — who buys it. AI converts this into Apollo search keywords automatically.</li>
-              <li><Code>TARGET LOCATIONS</Code> — comma-separated countries or regions.</li>
-              <li><Code>COMPANY SIZE</Code> — employee ranges (default: 11–50, 51–200, 201–500).</li>
-              <li><Code>MIN COMPANY SCORE</Code> — threshold for keeping a company (see rubric below).</li>
+              <li><Code>TARGET INDUSTRIES</Code> — multi-select. Pick the industries your buyers are in.</li>
+              <li><Code>TECH STACK</Code> — multi-select. Pick tools your buyers should already be using (Salesforce, ServiceNow, SAP, etc.). Apollo's technographic filter (paid feature).</li>
+              <li><Code>TARGET LOCATIONS</Code> — comma-separated countries, states, or cities.</li>
+              <li><Code>COMPANY SIZE</Code> — employee ranges.</li>
+              <li><Code>TARGET JOB TITLES</Code> — used by FIND CONTACTS to narrow Hunter to the right roles.</li>
+              <li><Code>PRODUCT DESCRIPTION</Code> — optional. Only used later for outreach drafts; not used for discovery.</li>
               <li>Apollo + Hunter API keys (Settings).</li>
             </ul>
           </Block>
@@ -141,37 +136,29 @@ export default function HowItWorks() {
             <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 10 }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', letterSpacing: '0.1em', marginBottom: 6 }}>STEP 1 — DISCOVER COMPANIES</div>
               <ol style={olStyle}>
-                <li>AI cleans your audience description into search keywords.</li>
-                <li>Apollo searches by keywords + location + employee size.</li>
-                <li>Each result is enriched with full firmographics.</li>
-                <li>AI scores each company 0–10 against your ICP (rubric below).</li>
-                <li>Companies at or above your threshold land in the COMPANIES tab.</li>
+                <li>Apollo searches its database using your structured filters (industries, tech, location, size). Deterministic.</li>
+                <li>Each result is enriched with full firmographics (description, website, LinkedIn, etc.).</li>
+                <li>Every matching company lands in the COMPANIES tab — no scoring step, no filtering by AI.</li>
               </ol>
             </div>
             <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 16px' }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--info)', letterSpacing: '0.1em', marginBottom: 6 }}>STEP 2 — FIND CONTACTS</div>
               <ol style={olStyle}>
-                <li>For each kept company, Hunter.io looks up executives & directors by domain.</li>
+                <li>For each company, Hunter.io looks up executives & directors by domain.</li>
                 <li>Returns name, title, seniority, verified work email (5 per company max).</li>
                 <li>Contacts land in the LEADS tab, exportable to Excel.</li>
               </ol>
             </div>
           </Block>
 
-          <Block label="The 0–10 score — what it means">
-            <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 16px' }}>
-              {SCORE_TIERS.map(t => (
-                <div key={t.label} style={{ display: 'flex', gap: 12, padding: '4px 0', fontSize: 13, color: 'var(--text2)' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, width: 50, color: 'var(--text)' }}>{t.range}</span>
-                  <span style={{ fontWeight: 700, width: 110 }}>{t.label}</span>
-                  <span>{t.desc}</span>
-                </div>
-              ))}
-            </div>
-            <p style={{ marginTop: 10, fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>
-              <strong>Recommended threshold: 7.</strong> Start there, look at what you get, then
-              raise to 8 if too many borderline companies sneak through. The score's <em>reason</em>
-              field shows which ICP criteria matched so you can sanity-check the AI.
+          <Block label="Why no AI scoring anymore">
+            <p style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>
+              An earlier version used AI to extract keywords from a free-text "target audience"
+              and to score each company 0–10. The keyword extractor hallucinated criteria not
+              in the input (e.g. invented "revenue over 10M" from "businesses in retail"), and
+              the scorer was too lenient about industry mismatch — IT companies serving retail
+              were getting 8/10 instead of being disqualified. Structured dropdowns + Apollo's
+              own taxonomy is more accurate and instant.
             </p>
           </Block>
         </Section>

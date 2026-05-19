@@ -78,15 +78,31 @@ export function SettingsProvider({ children }) {
   const [productDescription, setProductDescriptionState] = useState(
     localStorage.getItem('productDescription') || ''
   );
+  // targetAudience is deprecated — replaced by structured targetIndustries
+  // dropdown. Still read for backwards-compat / outreach-draft context.
   const [targetAudience, setTargetAudienceState] = useState(
     localStorage.getItem('targetAudience') || ''
   );
   const [targetJobTitles, setTargetJobTitlesState] = useState(
     localStorage.getItem('targetJobTitles') || 'CEO, Founder, CTO, VP of Engineering'
   );
+  // Deprecated alongside the AI scoring step; left readable to avoid
+  // breaking saved state but no longer used.
   const [minCompanyScore, setMinCompanyScoreState] = useState(
     Number(localStorage.getItem('minCompanyScore')) || 7
   );
+  const [targetIndustries, setTargetIndustriesState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('targetIndustries');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [targetTechnologies, setTargetTechnologiesState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('targetTechnologies');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
 
   // ── Outreach Runtime State ─────────────────────────────────────────
   const [outreachRuns, setOutreachRunsState] = useState(() => {
@@ -303,6 +319,8 @@ function deleteRun(runId) {
  
   function setProductDescription(v) { setProductDescriptionState(v); localStorage.setItem('productDescription', v); }
   function setTargetAudience(v) { setTargetAudienceState(v); localStorage.setItem('targetAudience', v); }
+  function setTargetIndustries(v) { setTargetIndustriesState(v); localStorage.setItem('targetIndustries', JSON.stringify(v)); }
+  function setTargetTechnologies(v) { setTargetTechnologiesState(v); localStorage.setItem('targetTechnologies', JSON.stringify(v)); }
   function setTargetJobTitles(v) { setTargetJobTitlesState(v); localStorage.setItem('targetJobTitles', v); }
   function setMinCompanyScore(v) { setMinCompanyScoreState(v); localStorage.setItem('minCompanyScore', String(v)); }
 
@@ -360,9 +378,12 @@ function deleteRun(runId) {
     });
   }
 
+  // Configured = API keys present + at least one structured filter chosen.
+  // Product description is no longer required for discovery (it's used
+  // only by the outreach-draft step, when that exists).
   const isOutreachConfigured = Boolean(
     apolloKey.trim() && hunterKey.trim() && apifyKey.trim() &&
-    productDescription.trim() && targetAudience.trim()
+    (targetIndustries.length || targetTechnologies.length || targetLocations.trim())
   );
 
   function saveSettings(key, id) {
@@ -405,6 +426,8 @@ function deleteRun(runId) {
         apifyKey, setApifyKey,
         productDescription, setProductDescription,
         targetAudience, setTargetAudience,
+        targetIndustries, setTargetIndustries,
+        targetTechnologies, setTargetTechnologies,
         targetJobTitles, setTargetJobTitles,
         minCompanyScore, setMinCompanyScore,
         isOutreachConfigured,

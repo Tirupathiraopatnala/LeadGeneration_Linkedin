@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { searchCompanies, enrichCompany } from '../services/apollo.js';
 import { findDecisionMakers } from '../services/apify.js';
-import { cleanSearchQuery, scoreCompany } from '../services/groq.js';
 
 export const outreachRouter = Router();
 
@@ -39,16 +38,29 @@ function setupRun(req, res, clientRunId) {
 }
 
 // ── FLOW 1: Company Discovery ─────────────────────────────────────────
+//
+// Deterministic Apollo search — no AI in this flow. Every company that
+// matches the user's filters is streamed back. No scoring, no triage.
+//
+// Why no AI: an earlier version extracted keywords from a free-text
+// "target audience" via the LLM, which hallucinated criteria not in the
+// input and produced false matches. With structured filters there is
+// nothing left for AI to do at this stage.
 outreachRouter.post('/discover', async (req, res) => {
   const {
-    apolloKey, targetAudience, productDescription, minCompanyScore = 7,
-    targetLocations, employeeRanges, clientRunId,
+    apolloKey,
+    industries = [],
+    technologies = [],
+    targetLocations,
+    employeeRanges,
+    clientRunId,
   } = req.body;
 
-  if (!apolloKey || !targetAudience || !productDescription) {
-    return res.status(400).json({ error: 'Missing apolloKey, targetAudience, or productDescription' });
-  }
+  if (!apolloKey) return res.status(400).json({ error: 'Missing apolloKey' });
   if (!clientRunId) return res.status(400).json({ error: 'clientRunId required' });
+  if (!industries.length && !technologies.length && !targetLocations?.length) {
+    return res.status(400).json({ error: 'Pick at least one filter (industry, technology, or location)' });
+  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -58,31 +70,40 @@ outreachRouter.post('/discover', async (req, res) => {
   const run = setupRun(req, res, clientRunId);
   const { ctx, signal } = run;
 
+  // Apollo's `organization_locations` expects an array of location strings;
+  // accept either an array or a comma-separated string for backwards-compat.
+  const locationsArr = Array.isArray(targetLocations)
+    ? targetLocations
+    : (targetLocations || '').split(',').map(s => s.trim()).filter(Boolean);
+
   try {
-    // Step 1 — Clean search query
-    send(res, 'progress', { message: 'Cleaning search keywords with AI...' });
-    const keywords = await cleanSearchQuery(targetAudience, signal);
-    send(res, 'progress', { message: `Keywords: ${keywords}` });
+    send(res, 'progress', {
+      message: `Searching Apollo — industries: [${industries.join(', ') || '—'}], tech: [${technologies.join(', ') || '—'}], locations: [${locationsArr.join(', ') || '—'}], sizes: [${(employeeRanges || []).join(', ') || '—'}]`,
+    });
 
-    if (ctx.cancelled) throw new Error('Cancelled by client');
+    const searchResult = await searchCompanies({
+      industries,
+      technologies,
+      locations:      locationsArr,
+      employeeRanges: employeeRanges || [],
+      perPage:        50,
+    }, apolloKey, signal);
 
-    // Step 2 — Search Apollo
-    send(res, 'progress', { message: 'Searching Apollo for matching companies...' });
-    const searchResult = await searchCompanies(keywords, apolloKey, {
-      locations: targetLocations,
-      employeeRanges: employeeRanges,
-    }, signal);
     const rawCompanies = searchResult?.organizations || [];
     send(res, 'progress', { message: `Found ${rawCompanies.length} companies` });
 
-    // Step 3 — Filter
-    const filtered = rawCompanies.filter(c => c.primary_domain || c.website_url).map(c => ({
-      ...c,
-      primary_domain: c.primary_domain || c.website_url?.replace('https://','').replace('http://','').replace('www.','').split('/')[0],
-    }));
-    send(res, 'progress', { message: `${filtered.length} companies after filtering` });
+    // Keep only companies with at least a domain we can later use for
+    // Hunter contact lookup.
+    const filtered = rawCompanies
+      .filter(c => c.primary_domain || c.website_url)
+      .map(c => ({
+        ...c,
+        primary_domain: c.primary_domain
+          || c.website_url?.replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0],
+      }));
 
-    // Step 4 — Enrich + Score
+    send(res, 'progress', { message: `${filtered.length} companies have a domain — enriching…` });
+
     const seenIds = new Set();
     for (const company of filtered) {
       if (ctx.cancelled) break;
@@ -96,36 +117,25 @@ outreachRouter.post('/discover', async (req, res) => {
         enriched = { ...company, ...enrichResult?.organization };
       } catch (err) {
         if (ctx.cancelled) break;
+        // Enrichment is best-effort; we still emit the company with the
+        // search-level data so the rep can see it.
       }
 
-      send(res, 'progress', { message: `Scoring: ${company.name}` });
-      let scored;
-      try {
-        scored = await scoreCompany(enriched, productDescription, targetAudience, signal);
-      } catch (err) {
-        if (ctx.cancelled) break;
-        send(res, 'warning', { message: `Score failed for ${company.name}: ${err.message}` });
-        continue;
-      }
-
-      if (scored.score >= minCompanyScore) {
-        send(res, 'company', {
-          id:          enriched.id,
-          name:        enriched.name,
-          domain:      enriched.primary_domain,
-          website:     enriched.website_url || '',
-          linkedin:    enriched.linkedin_url || '',
-          industry:    enriched.industry || '',
-          employees:   enriched.estimated_num_employees || enriched.num_employees || 0,
-          location:    enriched.city && enriched.state
-                         ? `${enriched.city}, ${enriched.state}`
-                         : enriched.state || enriched.country || '',
-          description: enriched.short_description || enriched.description || '',
-          score:       scored.score,
-          scoreReason: scored.reason,
-          state:       'qualified',
-        });
-      }
+      send(res, 'company', {
+        id:           enriched.id,
+        name:         enriched.name,
+        domain:       enriched.primary_domain,
+        website:      enriched.website_url || '',
+        linkedin:     enriched.linkedin_url || '',
+        industry:     enriched.industry || '',
+        employees:    enriched.estimated_num_employees || enriched.num_employees || 0,
+        location:     enriched.city && enriched.state
+                        ? `${enriched.city}, ${enriched.state}`
+                        : enriched.state || enriched.country || '',
+        description:  enriched.short_description || enriched.description || '',
+        technologies: enriched.current_technologies || enriched.technology_names || [],
+        state:        'qualified',
+      });
     }
 
     if (ctx.cancelled) {

@@ -21,21 +21,47 @@ async function apolloRequest(endpoint, method = 'GET', body = null, apiKey, sign
   return res.json();
 }
 
-export async function searchCompanies(keywords, apolloKey, options = {}, signal) {
-  const keywordArray = Array.isArray(keywords) ? keywords : [keywords];
+// Apollo company search.
+//
+// Deterministic structured-filter version. Replaces the earlier
+// keyword-driven flow (which was fed by an AI-extracted keyword list
+// and produced false matches — e.g. IT companies serving retail
+// instead of actual retail companies).
+//
+// `filters` is an object:
+//   industries       — array of industry name strings, sent as keyword tags
+//   technologies     — array of Apollo technology UIDs / slugs (paid feature)
+//   locations        — array of location strings ("United States", "California")
+//   employeeRanges   — array of "min,max" range strings ("11,50")
+//   page, perPage    — pagination (defaults: 1, 25)
+export async function searchCompanies(filters = {}, apolloKey, signal) {
+  const {
+    industries = [],
+    technologies = [],
+    locations = [],
+    employeeRanges = [],
+    page = 1,
+    perPage = 25,
+  } = filters;
 
-  const body = {
-    q_organization_keyword_tags: keywordArray,
-    page: options.page || 1,
-    per_page: options.perPage || 10,
-  };
+  const body = { page, per_page: perPage };
 
-  // Only add if provided
-  if (options.locations?.length) {
-    body.organization_locations = options.locations;
+  // Industries go via keyword tags. Apollo matches these against its
+  // industry taxonomy + tags, so single clean values ("retail",
+  // "manufacturing") produce far better hits than free-form prose.
+  if (industries.length) {
+    body.q_organization_keyword_tags = industries;
   }
-  if (options.employeeRanges?.length) {
-    body.organization_num_employees_ranges = options.employeeRanges;
+  if (technologies.length) {
+    // Paid-tier filter. On free tier Apollo returns an error or 0 rows;
+    // the route catches that and reports it.
+    body.currently_using_any_of_technology_uids = technologies;
+  }
+  if (locations.length) {
+    body.organization_locations = locations;
+  }
+  if (employeeRanges.length) {
+    body.organization_num_employees_ranges = employeeRanges;
   }
 
   return apolloRequest('/api/v1/organizations/search', 'POST', body, apolloKey, signal);
