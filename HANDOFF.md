@@ -4,6 +4,8 @@ Working branch: `claude/review-repo-improvements-OZNzR` (PR #1 against `main`).
 
 This document captures everything done in one Claude Code session so another LLM (or human) can pick up the work with full context. Read top-to-bottom.
 
+> **Keep this file current.** The user has standing instructions to update this doc after every meaningful change. When you make a commit on this branch, also: add a row to the commit table (§3), update the affected flow's "current state" (§4), update deferred work (§5) if you closed an item or discovered a new one, and bump anything in §6–§7 if a user preference or gotcha changed.
+
 ---
 
 ## 1. What the app is
@@ -13,8 +15,10 @@ A full-stack Node + React app that replicates a B2B lead-generation n8n workflow
 | Flow      | Source                         | Strength                        | Output                              |
 | --------- | ------------------------------ | ------------------------------- | ----------------------------------- |
 | LinkedIn  | ConnectSafely API + Azure OpenAI | High-intent (comment-based)     | Qualified individuals with score    |
-| Apollo    | Apollo + Hunter.io + Azure OpenAI | ICP-driven, high volume         | Scored companies → decision-maker emails |
+| Apollo    | Apollo + Hunter.io             | ICP-driven, deterministic       | Filtered companies → decision-maker emails |
 | Maps      | Apify Google Maps scraper      | Local-business cold lists       | Businesses with phone/email         |
+
+> Apollo flow no longer uses AI in discovery — see commit `0988b66`. The LinkedIn flow still uses Azure OpenAI for the Round 1 / Round 2 screening.
 
 **Stack**
 - Backend: Node 18+ (`type: "module"`), Express 5, `openai` SDK (Azure deployment), `xlsx` for export.
@@ -172,6 +176,9 @@ All on branch `claude/review-repo-improvements-OZNzR`.
 | `bf02a72` | Outreach: STOP button + backend abort + survive page navigation             | Same pattern for the Apollo/Hunter flow. Added STOP button (didn't exist before).                                |
 | `0993b07` | Outreach: fix '3 sizes selected' ghost + surface scoring rubric             | Employee-range default was Apollo's old letter codes; buttons used new numeric codes. Counter said 3 but nothing highlighted, filter silently broken. Also surfaced the AI scoring rubric in the UI. |
 | `3c81d98` | Add Guide page                                                              | Sales users had no plain-English reference for the three flows. New `/guide` route in the sidebar.                |
+| `68b9613` | Add session handoff doc                                                     | This file. Designed to be read top-to-bottom by another agent picking up the branch.                              |
+| `8467418` | Outreach: lock down keyword extraction + hard-disqualify industry mismatch  | The AI keyword extractor hallucinated revenue criteria from "retail and manufacturing" and dropped the actual industries. Tightened the prompt (no inventing, examples, temp 0) and added explicit industry-mismatch disqualification rules to the scorer. Superseded by `0988b66`. |
+| `0988b66` | Outreach: deterministic Apollo search — drop AI keyword + AI score          | User correctly pointed out the whole AI-keyword + AI-scoring approach was wrong for the Apollo flow. Replaced with structured Apollo filters: industry multi-select, tech-stack multi-select (Apollo technology UIDs), location, employee size. No more `cleanSearchQuery` or `scoreCompany` call from `/discover`. |
 
 ---
 
@@ -199,24 +206,27 @@ STOP button posts to `/api/pipeline/stop`, also aborts the local fetch. `res.on(
 ### Outreach / Apollo (`routes/outreach.js` + `pages/Outreach.jsx`)
 
 **Two flows triggered by separate buttons:**
-- **DISCOVER COMPANIES** — `/discover`: AI cleans target audience into keywords → Apollo company search → enrich each → AI score 0–10 → keep companies ≥ threshold.
+- **DISCOVER COMPANIES** — `/discover`: **Deterministic Apollo search**. Reads structured filters (`industries[]`, `technologies[]`, `targetLocations[]`, `employeeRanges[]`) from req body. Calls `searchCompanies` → enriches each result via `enrichCompany` → streams every match as a `company` event. No AI in the loop. No scoring. No filtering by anything other than what the user picked.
 - **FIND CONTACTS** — `/enrich`: For each kept company, Hunter.io finds executives/directors (3 fallback attempts: strict → wider seniority → any email type). Returns up to 5 contacts/company.
 
-**Cancellation:** Same `activeRuns` pattern. One `clientRunId` shared across both flows (the discovery's runId). Signal threaded through Apollo (`searchCompanies`, `enrichCompany`), Hunter (`findDecisionMakers`), and Azure OpenAI (`cleanSearchQuery`, `scoreCompany`, plus the unused-but-ready `createPersonalisationBrief`, `writeColdEmails`, `writeSubjectLines`).
+**Filter inputs (UI):**
+- `TARGET INDUSTRIES` — chip multi-select from 28 curated industries (Retail, Manufacturing, Healthcare, …). Sent to Apollo as `q_organization_keyword_tags` array. Single clean values match Apollo's industry taxonomy reliably.
+- `TECH STACK` — chip multi-select from 25 curated tech slugs (`salesforce`, `servicenow`, `sap`, `snowflake`, …). Sent to Apollo as `currently_using_any_of_technology_uids`. **Paid Apollo feature** — user confirmed they're on a paid plan.
+- `TARGET LOCATIONS` — comma-separated free text → split into array → `organization_locations`.
+- `COMPANY SIZE` — chip multi-select of numeric ranges like `"11,50"` → `organization_num_employees_ranges`.
+- `TARGET JOB TITLES` — used only by FIND CONTACTS (Hunter seniority filtering), not discovery.
+- `PRODUCT DESCRIPTION` — **no longer used for discovery**. Lives in settings for a future outreach-draft step. UI label explicitly says "Used later for outreach drafts. Not used for discovery."
+- Validation: at least one of industries / technologies / locations must be set.
 
-**Single STOP button** appears whenever `isRunning` is true (discovering OR enriching), replacing both `DISCOVER COMPANIES` and `FIND CONTACTS`.
+**Cancellation:** Same `activeRuns` pattern as the other flows. One `clientRunId` shared by `/discover` and `/enrich`. Signal threaded through Apollo (`searchCompanies`, `enrichCompany`) and Hunter (`findDecisionMakers`). Single STOP button visible whenever `isRunning` is true.
 
-**AI scoring rubric** (anchored in `services/groq.js` `scoreCompany` prompt AND rendered in the UI under the slider):
-- 1–3 Weak fit
-- 4–5 Borderline
-- 6–7 Decent fit
-- 8–9 Strong fit
-- 10 Perfect fit
-The prompt explicitly tells the model "use the WHOLE range, do NOT cluster around 7" and asks the `reason` field to cite which ICP criteria matched.
+**Dead but still-present code in `services/groq.js`:** `cleanSearchQuery` and `scoreCompany` were the AI keyword-extractor and AI scorer. They are no longer imported by `routes/outreach.js`. Left in place because the cold-email-writing functions (`createPersonalisationBrief`, `writeColdEmails`, `writeSubjectLines`) are alongside them and we'll want those later. Safe to delete the two unused ones if you're cleaning up — but check no future feature wants them first.
 
-**Employee range fix:** Defaults are now `['11,50', '51,200', '201,500']` (Apollo's numeric `organization_num_employees_ranges` format). Legacy letter codes (A–H) in `localStorage` are auto-migrated on load.
+**Excel export still includes `Company Score` columns** (set by the LinkedIn pipeline's Apollo enrichment, not by Outreach). Don't strip them — they're needed by the LinkedIn export path.
 
-**Cold-email generation step (`writeColdEmails`, `writeSubjectLines`) exists in `services/groq.js` but is NOT wired into a route yet.** They accept `signal` so they're plumbing-ready.
+**Employee range default:** `['11,50', '51,200', '201,500']` (Apollo's numeric format). Legacy letter codes (A–H) in `localStorage` are auto-migrated on load — see `LEGACY_RANGE_MAP` in `SettingsContext.jsx`.
+
+**Cold-email generation (`writeColdEmails`, `writeSubjectLines`, `createPersonalisationBrief`) exists in `services/groq.js` but is NOT wired into a route yet.** They accept `signal` so they're plumbing-ready. See §5 item 5 for the planned Research tab + outreach-draft flow.
 
 ### Maps (`routes/maps.js` + `pages/maps.jsx`)
 
@@ -250,13 +260,25 @@ These are real improvements I named but didn't ship in this session. Pick from t
 2. **Extract a reusable SSE client.** Same ~30-line `reader.read() + buffer.split('\n\n')` boilerplate is copied across `LinkedIn.jsx`, `Outreach.jsx`, `maps.jsx`. A `consumeSSE(response, handlers)` utility would cut ~80 LOC.
 3. **Parallelize Round 2 in the LinkedIn pipeline.** All other stages batch in groups of 5; Round 2 is a sequential `for` loop. Easy 5–10× speedup.
 4. **Replace in-memory `runResults` Map with SQLite.** Currently a process restart loses all run history. `better-sqlite3` is enough.
-5. **TheirStack + Crustdata trigger signals.** The user explicitly approved adding these as a future feature. I asked for (a) API keys, (b) which 2 of 6 signals matter most. They haven't picked yet. Recommended approach (Option A from that exchange): enrich qualified leads with `hiring-sdr` and `headcount-growth-15pct-6mo` booleans, bump confidence score when present. NOT a separate pipeline.
-6. **CRM/sequencer push.** Sales reps don't reach out from xlsx. Direct push to HubSpot / Pipedrive / Smartlead / Instantly etc. would massively shorten the funnel. The user runs… unknown — I asked which CRM they use, they haven't answered yet.
-7. **Multi-signal scoring.** Currently the LLM produces one 0–10 score. Decomposing into `ICP_fit + intent + decision_power + recency` (each computed separately) would give more stable rankings.
-8. **Feedback loop from sales.** A "good lead / bad lead" checkbox in the UI, logged, then used as few-shot examples in the qualify prompt. Single biggest lever for prompt quality over time.
-9. **ConnectSafely preflight check.** One cheap call before the real pipeline kicks off, surfacing "ConnectSafely auth invalid — fix your LinkedIn cookie" upfront instead of a per-keyword warning 30 seconds in. We saw this exact failure mode in the session.
-10. **Security: keys out of `localStorage` and request bodies.** Right now every API key lives in `localStorage` and travels in `req.body`. Fine for solo localhost dev; would be a credential-exfil vector for any production deployment. CORS is also `origin: '*'`.
-11. **`services/groq.js` is misnamed** — it doesn't talk to Groq, it talks to Azure OpenAI. Either rename to `services/email-ai.js` or merge into `azureopenai.js`. Cosmetic but confusing for newcomers.
+5. **Research tab + outreach-draft generation (the next big feature the user wants).** Discussed extensively at the end of the session. Plan:
+   - New `/research` route + sidebar item.
+   - Triggered per-lead by a "Research" button on Apollo Leads / LinkedIn Leads rows. Never bulk, never automatic — to control credit burn AND lead-quality risk.
+   - Research view loads in parallel: Apollo `/people/match` (person), Apollo `/organizations/enrich` (company), **Tavily** search for company news + person mentions, plus a "Open LinkedIn" manual click-through button (NO programmatic LinkedIn scraping — user explicitly ruled out anything that uses their `li_at` cookie; see §6).
+   - Notes textarea for the rep to add their own observations.
+   - "WRITE OUTREACH DRAFT" button wires the existing `createPersonalisationBrief` + `writeColdEmails` + `writeSubjectLines` in `services/groq.js` into a new route. Output: 3 email drafts with subject lines, copy-to-clipboard per email. Saved back to the lead.
+   - Each external call is independent — if Tavily is down or product description is empty, the panel still renders what worked.
+   - The user is fine with paid Apollo, so use all paid Apollo features freely (no need for graceful free-tier degradation).
+6. **TheirStack + Crustdata trigger signals.** I previously suggested these. User pushed back correctly: **for retail/manufacturing IT services, generic triggers like funding / headcount growth / SDR hiring are nearly irrelevant.** The signals that actually matter for that ICP are *role-specific* job postings ("Salesforce admin", "Data engineer", "ServiceNow admin"), *tech-stack adoption* changes, and *new CIO/CDO appointments*. If revisiting this, scope the trigger types to the user's ICP, don't import the generic SaaS-startup playbook.
+7. **CRM/sequencer push.** Sales reps don't reach out from xlsx. Direct push to HubSpot / Pipedrive / Smartlead / Instantly etc. would massively shorten the funnel. Not yet scoped — user hasn't said which CRM they use.
+8. **ConnectSafely preflight check.** One cheap call before the LinkedIn pipeline kicks off, surfacing "ConnectSafely auth invalid — fix your LinkedIn cookie" upfront instead of a per-keyword warning 30 seconds in. We hit this failure mode in the session.
+9. **Security: keys out of `localStorage` and request bodies.** Right now every API key lives in `localStorage` and travels in `req.body`. Fine for solo localhost dev; would be a credential-exfil vector for any production deployment. CORS is also `origin: '*'`.
+10. **`services/groq.js` is misnamed** — it doesn't talk to Groq, it talks to Azure OpenAI. Either rename to `services/email-ai.js` or merge into `azureopenai.js`. Cosmetic but confusing for newcomers.
+11. **Delete dead code in `services/groq.js`** — `cleanSearchQuery` and `scoreCompany` are no longer imported. Safe to remove once you've confirmed nothing in the planned research-tab flow needs them.
+
+**Closed items** (originally deferred, now done — keeping a short trail):
+- ~~Outreach AI keyword extraction misbehaves~~ — solved by removing AI entirely from the discovery step (commit `0988b66`).
+- ~~Multi-signal scoring~~ — moot for Outreach now that scoring is deterministic. Still relevant for LinkedIn pipeline if you want to refactor the Round 2 confidence score later.
+- ~~Feedback loop from sales~~ — moot for Outreach. Still applicable to LinkedIn pipeline's Round 2 scorer.
 
 ---
 
@@ -264,7 +286,11 @@ These are real improvements I named but didn't ship in this session. Pick from t
 
 - **They run on macOS or Windows** (case-insensitive FS). I fixed an `azureOpenAI.js` → `azureopenai.js` casing bug that was working for them only because of FS quirks; it would have failed on Linux production.
 - **They were testing ConnectSafely with an expired LinkedIn cookie.** When they say "the keyword failed", check the activity log for `Failed to get LinkedIn authentication credentials` — that's their `li_at` cookie, fix is on ConnectSafely's dashboard, not in code.
-- **Apollo free tier.** They confirmed they're on it. Most emails will come back `emailLocked: true`. Don't assume the enrichment is broken if 80% of leads show 🔒 — that's the expected free-tier behavior.
+- **Apollo: paid plan.** Confirmed mid-session ("don't worry about the free plan, I can take a paid plan from my sales team"). Use paid Apollo features freely — `currently_using_any_of_technology_uids`, `revenue_range`, etc. Free-tier graceful-degradation work is not needed.
+- **Apollo locked-email indicator was relevant for the LinkedIn-pipeline enrichment path** (which still runs on the paid Apollo key). The 🔒 indicator stays in the UI in case credits run out; not currently expected to fire.
+- **They sell IT services to retail and manufacturing** (data analytics, web dev, Generative AI, Salesforce, ServiceNow). That ICP shapes several decisions: keep `Retail`, `Manufacturing`, plus `Salesforce`, `ServiceNow`, `SAP` near the top of dropdowns; avoid recommending generic SaaS-startup signals (funding, SDR hiring) as triggers — those are noise for this ICP.
+- **No LinkedIn scraping that touches the user's account.** Explicit rule. Rules out PhantomBuster, Apify LinkedIn actors, and any service using their `li_at` cookie. They cited LinkedIn account bans they've seen with PhantomBuster.
+- **Proxycurl shut down in 2024** (lost LinkedIn lawsuit). Successor "NinjaPear" is unproven. Don't recommend either. For LinkedIn person data, the cleanest legitimate paths today are People Data Labs or Coresignal (licensed/aggregated data, not the user's cookie). For v1 of the research tab, the agreed approach is **skip programmatic LinkedIn entirely** and use Apollo paid data + Tavily web search + a manual "Open LinkedIn" click-through button.
 - **They use Vite dev server with proxy** (`/api` → `localhost:3001`). Pure frontend changes get HMR; backend changes need a restart even with nodemon (sometimes nodemon catches it, sometimes not).
 - **They run things in VS Code locally**, not on a deployed environment. No CI configured on the GitHub repo (`get_check_runs` returned empty).
 
@@ -276,9 +302,12 @@ These are real improvements I named but didn't ship in this session. Pick from t
 - **Do not** call `res.write()` on a closed socket. Use the safe `send()` helper that checks `res.writableEnded` / `res.destroyed`.
 - **Do not** create a new SSE flow without the `clientRunId` + `activeRuns` + `/stop` pattern. The user explicitly cares about credit-burn on STOP and disconnect.
 - **Do not** put run state in local component state. Use `SettingsContext`. Otherwise page navigation wipes status/logs.
-- **Do not** create documentation files (`*.md`, `README*.md`) unless explicitly requested. This file is the one explicit exception in this session.
+- **Do not** create documentation files (`*.md`, `README*.md`) unless explicitly requested. `HANDOFF.md` is the one explicit exception, and the user wants it updated after every change — don't add other docs without asking.
 - **Do not** push to `main`. All work is on `claude/review-repo-improvements-OZNzR`, which is open as PR #1.
 - **Do not** add emojis to source code or prompts the user will read in product output (the `Code` component in `HowItWorks.jsx` uses a 🔒 emoji because the user *asked* for the locked-email indicator visually; that's a deliberate exception).
+- **Do not reintroduce AI keyword extraction or AI scoring into the Apollo discovery flow.** The user explicitly rejected this approach after seeing the AI hallucinate ("revenue over 10 million" from "Businesses retail and manufacturing sector") and score IT services companies as 8/10 for retail/manufacturing targets. Apollo discovery is deterministic now — keep it that way. If you think AI should re-enter the Apollo flow, it belongs in *outreach drafting* (per §5 item 5), not in *discovery*.
+- **Do not introduce any LinkedIn scraping that uses the user's `li_at` cookie** — PhantomBuster, Apify LinkedIn actors, etc. all banned by user policy. See §6.
+- **Do not recommend Proxycurl.** It shut down in 2024. People Data Labs / Coresignal are the legitimate-looking alternatives if programmatic LinkedIn person data ever becomes necessary; the agreed v1 is to skip it entirely.
 
 ---
 
@@ -291,7 +320,7 @@ After pulling `claude/review-repo-improvements-OZNzR`:
 3. Open `http://localhost:5173/guide` first — sanity-check the new page loads.
 4. Settings → make sure ConnectSafely key + Account ID, Apollo key, Hunter key, Apify key are all set (you may have them already if testing locally).
 5. **LinkedIn flow:** click RUN PIPELINE with default keywords. Watch the activity log. Click STOP mid-run — verify "Stop acknowledged — backend aborted" appears within a second.
-6. **Outreach flow:** click DISCOVER COMPANIES. Verify the scoring rubric panel under the slider highlights as you drag the score. Click STOP mid-run.
+6. **Outreach flow:** CONFIG tab — pick at least one industry chip (e.g. Retail, Manufacturing), optionally a tech (e.g. Salesforce), set a location and company size, save. Click DISCOVER COMPANIES. Verify the activity log shows a single line of structured filters being sent, no "Cleaning keywords with AI" or "Scoring" lines. Click STOP mid-run.
 7. **Maps flow:** Add a search with country/city/manual ZIP. Click RUN SCRAPER. Verify live "Apify: N places scraped — Ms elapsed" updates every 2 seconds. Navigate to another page and back — log should be intact.
 
 If anything misbehaves, the first thing to check is whether the backend was actually restarted (Vite HMR won't pick up Node changes).
