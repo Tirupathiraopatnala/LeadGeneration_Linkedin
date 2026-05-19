@@ -58,11 +58,16 @@ export default function Outreach() {
     completeOutreachRun, deleteOutreachRun,
     targetLocations, setTargetLocations,
     employeeRanges, setEmployeeRanges,
+    outreachStatus: status, setOutreachStatus: setStatus,
+    outreachLogs: logs, setOutreachLogs: setLogs,
+    addOutreachLog: addLog,
   } = useSettings();
 
-  const [activeTab, setActiveTab] = useState('CONFIG');
-  const [status, setStatus] = useState('idle');
-  const [logs, setLogs] = useState([]);
+  const [activeTab, setActiveTab] = useState(() =>
+    status === 'discovering' ? 'COMPANIES'
+      : status === 'enriching' ? 'LEADS'
+      : 'CONFIG'
+  );
   const [exporting, setExporting] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
   const [expandedCompany, setExpandedCompany] = useState(null);
@@ -111,10 +116,6 @@ export default function Outreach() {
     setFilterSearch('');
   }
 
-  function addLog(msg, type = 'info') {
-    setLogs(prev => [...prev.slice(-99), { time: new Date().toLocaleTimeString(), msg, type }]);
-  }
-
   function saveConfig() {
     setProductDescription(productInput.trim());
     setTargetAudience(audienceInput.trim());
@@ -141,7 +142,7 @@ export default function Outreach() {
       const res = await fetch('/api/outreach/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apolloKey, targetAudience: targetAudience || audienceInput, productDescription: productDescription || productInput, minCompanyScore: minCompanyScore || scoreInput, targetLocations: targetLocations || locationsInput, employeeRanges: employeeRanges?.length ? employeeRanges : rangesInput }),
+        body: JSON.stringify({ apolloKey, targetAudience: targetAudience || audienceInput, productDescription: productDescription || productInput, minCompanyScore: minCompanyScore || scoreInput, targetLocations: targetLocations || locationsInput, employeeRanges: employeeRanges?.length ? employeeRanges : rangesInput, clientRunId: newRunId }),
       });
 
       if (!res.ok) { addLog(`Server error: ${await res.text()}`, 'error'); setStatus('error'); return; }
@@ -186,10 +187,11 @@ export default function Outreach() {
 
     try {
       addLog(`Finding contacts for ${companies.length} companies...`, 'info');
+      const enrichRunId = activeRun?.runId || outreachRuns[outreachRuns.length - 1]?.runId || `outreach_${Date.now()}`;
       const res = await fetch('/api/outreach/enrich', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hunterKey, companies }),
+        body: JSON.stringify({ hunterKey, companies, clientRunId: enrichRunId }),
       });
 
       if (!res.ok) { addLog(`Server error: ${await res.text()}`, 'error'); setStatus('error'); return; }
@@ -226,6 +228,24 @@ export default function Outreach() {
         }
       }
     } catch (err) { setStatus('error'); addLog(`Connection error: ${err.message}`, 'error'); }
+  }
+
+  async function stopOutreach() {
+    const runId = activeOutreachRunId || activeRun?.runId;
+    if (!runId) return;
+    addLog('Stopping…', 'warn');
+    setStatus('idle');
+    completeOutreachRun(runId);
+    try {
+      await fetch('/api/outreach/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientRunId: runId }),
+      });
+      addLog('Stop acknowledged — backend aborted', 'warn');
+    } catch (err) {
+      addLog(`Stop failed: ${err.message}`, 'error');
+    }
   }
 
   async function downloadExcel() {
@@ -266,6 +286,8 @@ export default function Outreach() {
           {leads.length > 0 && <button onClick={downloadExcel} disabled={exporting} style={{ padding: '9px 16px', background: 'transparent', color: 'var(--accent)', border: '1px solid rgba(0,229,160,0.4)', borderRadius: 'var(--radius)', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>{exporting ? '↻' : '↓'} EXPORT ({filteredLeads.length})</button>}
           {!isOutreachConfigured ? (
             <NavLink to="/settings"><button style={{ padding: '10px 22px', background: 'var(--warn)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer' }}>⚙ CONFIGURE FIRST</button></NavLink>
+          ) : isRunning ? (
+            <button onClick={stopOutreach} style={{ padding: '10px 22px', background: 'var(--warn)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer' }}>■ STOP</button>
           ) : activeTab === 'COMPANIES' && companies.length > 0 && status !== 'enriching' ? (
             <button onClick={runEnrichment} disabled={isRunning} style={{ padding: '10px 24px', background: 'var(--info)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><span>👤</span> FIND CONTACTS</button>
           ) : activeTab !== 'LEADS' ? (

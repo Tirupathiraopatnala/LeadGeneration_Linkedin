@@ -96,6 +96,16 @@ export function SettingsProvider({ children }) {
     } catch { return []; }
   });
   const [activeOutreachRunId, setActiveOutreachRunId] = useState(null);
+  const [outreachStatus, setOutreachStatus] = useState('idle');
+  const [outreachLogs, setOutreachLogs] = useState([]);
+
+  function addOutreachLog(msg, type = 'info') {
+    setOutreachLogs(prev => [...prev.slice(-99), {
+      time: new Date().toLocaleTimeString(),
+      msg,
+      type,
+    }]);
+  }
 
   // ── Maps Runtime State ─────────────────────────────────────────────
   const [mapsRuns, setMapsRunsState] = useState(() => {
@@ -394,6 +404,11 @@ function deleteRun(runId) {
         addLeadToOutreachRun,
         completeOutreachRun,
         deleteOutreachRun,
+        outreachStatus,
+        setOutreachStatus,
+        outreachLogs,
+        setOutreachLogs,
+        addOutreachLog,
         targetLocations, setTargetLocations,
         employeeRanges, setEmployeeRanges,
         // Auth check

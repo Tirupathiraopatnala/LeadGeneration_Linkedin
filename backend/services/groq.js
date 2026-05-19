@@ -12,28 +12,28 @@ function getClient() {
   });
 }
 
-async function azureRequest(messages, maxTokens = 1000) {
+async function azureRequest(messages, maxTokens = 1000, signal) {
   const client = getClient();
   const response = await client.chat.completions.create({
     model: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4.1-mini',
     messages,
     temperature: 0.2,
     max_tokens: maxTokens,
-  });
+  }, { signal });
   return response.choices[0]?.message?.content || '';
 }
 
 // Clean keywords for Apollo search
-export async function cleanSearchQuery(targetAudience) {
+export async function cleanSearchQuery(targetAudience, signal) {
   const content = await azureRequest([{
     role: 'user',
     content: `Extract 3-5 clean search keywords from this target audience description for Apollo.io company search. Return ONLY the keywords as a comma-separated list, nothing else.\n\nTarget audience: ${targetAudience}`,
-  }], 100);
+  }], 100, signal);
   return content.trim().split(',').map(k => k.trim()).filter(Boolean);
 }
 
 // Score a company
-export async function scoreCompany(companyData, productDescription, targetAudience) {
+export async function scoreCompany(companyData, productDescription, targetAudience, signal) {
   const raw = await azureRequest([{
     role: 'user',
     content: `You are a B2B sales analyst. Score this company as a potential customer for our product.
@@ -54,7 +54,7 @@ Score from 0-10 how good a fit this company is. Return ONLY JSON, no markdown:
   "score": 8,
   "reason": "one line explanation"
 }`,
-  }], 200);
+  }], 200, signal);
 
   try {
     const clean = raw.replace(/```json|```/g, '').trim();
@@ -65,7 +65,7 @@ Score from 0-10 how good a fit this company is. Return ONLY JSON, no markdown:
 }
 
 // Create personalisation brief
-export async function createPersonalisationBrief(personProfile, companyData, productDescription) {
+export async function createPersonalisationBrief(personProfile, companyData, productDescription, signal) {
   return azureRequest([{
     role: 'user',
     content: `You are a B2B sales expert. Create a personalisation brief for a cold email.
@@ -89,11 +89,11 @@ Write a brief covering:
 3. How our product connects to their situation
 
 Keep it under 150 words.`,
-  }], 300);
+  }], 300, signal);
 }
 
 // Write 3 cold emails
-export async function writeColdEmails(personalisationBrief, personName, productDescription) {
+export async function writeColdEmails(personalisationBrief, personName, productDescription, signal) {
   const raw = await azureRequest([{
     role: 'user',
     content: `Write 3 cold emails based on this brief. Each email under 100 words, informal tone, ends with a curiosity question. No subject lines.
@@ -108,7 +108,7 @@ Return ONLY JSON, no markdown:
   "first_follow_up": "...",
   "second_follow_up": "..."
 }`,
-  }], 800);
+  }], 800, signal);
 
   try {
     const clean = raw.replace(/```json|```/g, '').trim();
@@ -123,7 +123,7 @@ Return ONLY JSON, no markdown:
 }
 
 // Write 3 subject lines
-export async function writeSubjectLines(emails, personFirstName) {
+export async function writeSubjectLines(emails, personFirstName, signal) {
   const raw = await azureRequest([{
     role: 'user',
     content: `Write 3 email subject lines, one for each email. Lowercase, 5-7 words, personal, non-salesy, use the prospect's first name.
@@ -140,7 +140,7 @@ Return ONLY JSON, no markdown:
   "subject2": "...",
   "subject3": "..."
 }`,
-  }], 200);
+  }], 200, signal);
 
   try {
     const clean = raw.replace(/```json|```/g, '').trim();

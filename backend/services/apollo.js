@@ -21,7 +21,7 @@ async function apolloRequest(endpoint, method = 'GET', body = null, apiKey, sign
   return res.json();
 }
 
-export async function searchCompanies(keywords, apolloKey, options = {}) {
+export async function searchCompanies(keywords, apolloKey, options = {}, signal) {
   const keywordArray = Array.isArray(keywords) ? keywords : [keywords];
 
   const body = {
@@ -38,11 +38,11 @@ export async function searchCompanies(keywords, apolloKey, options = {}) {
     body.organization_num_employees_ranges = options.employeeRanges;
   }
 
-  return apolloRequest('/api/v1/organizations/search', 'POST', body, apolloKey);
+  return apolloRequest('/api/v1/organizations/search', 'POST', body, apolloKey, signal);
 }
 
-export async function enrichCompany(domain, apolloKey) {
-  return apolloRequest(`/api/v1/organizations/enrich?domain=${encodeURIComponent(domain)}`, 'GET', null, apolloKey);
+export async function enrichCompany(domain, apolloKey, signal) {
+  return apolloRequest(`/api/v1/organizations/enrich?domain=${encodeURIComponent(domain)}`, 'GET', null, apolloKey, signal);
 }
 
 // Detect Apollo's locked-email sentinel ("email_not_unlocked@domain.com")

@@ -1,6 +1,6 @@
 const HUNTER_BASE = 'https://api.hunter.io/v2';
 
-export async function findDecisionMakers(domain, hunterKey) {
+export async function findDecisionMakers(domain, hunterKey, signal) {
   // Clean domain
   const cleanDomain = domain
     ?.replace(/^https?:\/\//, '')
@@ -14,16 +14,16 @@ export async function findDecisionMakers(domain, hunterKey) {
   }
 
   // Attempt 1 — strictest
-  let emails = await hunterSearch(cleanDomain, hunterKey, 'executive,director', 'personal');
+  let emails = await hunterSearch(cleanDomain, hunterKey, 'executive,director', 'personal', signal);
 
   // Attempt 2 — wider seniority
   if (!emails.length) {
-    emails = await hunterSearch(cleanDomain, hunterKey, 'executive,director,senior', 'personal');
+    emails = await hunterSearch(cleanDomain, hunterKey, 'executive,director,senior', 'personal', signal);
   }
 
   // Attempt 3 — any email type
   if (!emails.length) {
-    emails = await hunterSearch(cleanDomain, hunterKey, 'executive,director,senior', '');
+    emails = await hunterSearch(cleanDomain, hunterKey, 'executive,director,senior', '', signal);
   }
 
   return emails.map(p => ({
@@ -40,7 +40,7 @@ export async function findDecisionMakers(domain, hunterKey) {
   }));
 }
 
-async function hunterSearch(domain, hunterKey, seniority, type) {
+async function hunterSearch(domain, hunterKey, seniority, type, signal) {
   const params = new URLSearchParams({
     domain,
     api_key: hunterKey,
@@ -49,7 +49,7 @@ async function hunterSearch(domain, hunterKey, seniority, type) {
   if (seniority) params.set('seniority', seniority);
   if (type) params.set('type', type);
 
-  const res = await fetch(`${HUNTER_BASE}/domain-search?${params}`);
+  const res = await fetch(`${HUNTER_BASE}/domain-search?${params}`, { signal });
   if (!res.ok) throw new Error(`Hunter domain search failed [${res.status}]`);
   const data = await res.json();
   return data?.data?.emails || [];

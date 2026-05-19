@@ -5,38 +5,73 @@ import { cleanSearchQuery, scoreCompany } from '../services/groq.js';
 
 export const outreachRouter = Router();
 
+// In-flight discovery / enrichment sessions keyed by clientRunId.
+// Lets POST /stop find and abort whichever flow the user is running.
+const activeRuns = new Map();
+
 function send(res, event, data) {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  if (res.writableEnded || res.destroyed) return;
+  try {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch {
+    // Socket may have closed between the check and the write — ignore.
+  }
+}
+
+function setupRun(req, res, clientRunId) {
+  const controller = new AbortController();
+  const ctx = { cancelled: false, controller };
+  activeRuns.set(clientRunId, ctx);
+
+  let completed = false;
+  res.on('close', () => {
+    if (!completed) {
+      ctx.cancelled = true;
+      controller.abort();
+    }
+  });
+
+  return {
+    ctx,
+    signal: controller.signal,
+    finish() { completed = true; activeRuns.delete(clientRunId); res.end(); },
+  };
 }
 
 // ── FLOW 1: Company Discovery ─────────────────────────────────────────
 outreachRouter.post('/discover', async (req, res) => {
   const {
     apolloKey, targetAudience, productDescription, minCompanyScore = 7,
-    targetLocations, employeeRanges,
+    targetLocations, employeeRanges, clientRunId,
   } = req.body;
 
   if (!apolloKey || !targetAudience || !productDescription) {
     return res.status(400).json({ error: 'Missing apolloKey, targetAudience, or productDescription' });
   }
+  if (!clientRunId) return res.status(400).json({ error: 'clientRunId required' });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  const run = setupRun(req, res, clientRunId);
+  const { ctx, signal } = run;
+
   try {
     // Step 1 — Clean search query
     send(res, 'progress', { message: 'Cleaning search keywords with AI...' });
-    const keywords = await cleanSearchQuery(targetAudience);
+    const keywords = await cleanSearchQuery(targetAudience, signal);
     send(res, 'progress', { message: `Keywords: ${keywords}` });
+
+    if (ctx.cancelled) throw new Error('Cancelled by client');
 
     // Step 2 — Search Apollo
     send(res, 'progress', { message: 'Searching Apollo for matching companies...' });
     const searchResult = await searchCompanies(keywords, apolloKey, {
       locations: targetLocations,
       employeeRanges: employeeRanges,
-    });
+    }, signal);
     const rawCompanies = searchResult?.organizations || [];
     send(res, 'progress', { message: `Found ${rawCompanies.length} companies` });
 
@@ -50,18 +85,28 @@ outreachRouter.post('/discover', async (req, res) => {
     // Step 4 — Enrich + Score
     const seenIds = new Set();
     for (const company of filtered) {
+      if (ctx.cancelled) break;
       if (seenIds.has(company.id)) continue;
       seenIds.add(company.id);
 
       send(res, 'progress', { message: `Enriching: ${company.name}` });
       let enriched = company;
       try {
-        const enrichResult = await enrichCompany(company.primary_domain, apolloKey);
+        const enrichResult = await enrichCompany(company.primary_domain, apolloKey, signal);
         enriched = { ...company, ...enrichResult?.organization };
-      } catch { }
+      } catch (err) {
+        if (ctx.cancelled) break;
+      }
 
       send(res, 'progress', { message: `Scoring: ${company.name}` });
-      const scored = await scoreCompany(enriched, productDescription, targetAudience);
+      let scored;
+      try {
+        scored = await scoreCompany(enriched, productDescription, targetAudience, signal);
+      } catch (err) {
+        if (ctx.cancelled) break;
+        send(res, 'warning', { message: `Score failed for ${company.name}: ${err.message}` });
+        continue;
+      }
 
       if (scored.score >= minCompanyScore) {
         send(res, 'company', {
@@ -83,30 +128,43 @@ outreachRouter.post('/discover', async (req, res) => {
       }
     }
 
-    send(res, 'complete', { message: 'Company discovery complete' });
+    if (ctx.cancelled) {
+      send(res, 'warning', { message: 'Discovery cancelled' });
+    } else {
+      send(res, 'complete', { message: 'Company discovery complete' });
+    }
 
   } catch (err) {
-    send(res, 'error', { message: err.message });
+    if (ctx.cancelled) {
+      send(res, 'warning', { message: 'Discovery cancelled' });
+    } else {
+      send(res, 'error', { message: err.message });
+    }
   } finally {
-    res.end();
+    run.finish();
   }
 });
 
 // ── FLOW 2: Contact Finding ───────────────────────────────────────────
 outreachRouter.post('/enrich', async (req, res) => {
-  const { hunterKey, companies } = req.body;
+  const { hunterKey, companies, clientRunId } = req.body;
 
   if (!hunterKey || !companies?.length) {
     return res.status(400).json({ error: 'Missing hunterKey or companies' });
   }
+  if (!clientRunId) return res.status(400).json({ error: 'clientRunId required' });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  const run = setupRun(req, res, clientRunId);
+  const { ctx, signal } = run;
+
   try {
     for (const company of companies) {
+      if (ctx.cancelled) break;
       send(res, 'progress', { message: `Finding decision makers at ${company.name}...` });
 
       if (!company.domain || company.domain.includes(' ') || company.domain.includes(',')) {
@@ -116,8 +174,9 @@ outreachRouter.post('/enrich', async (req, res) => {
 
       let contacts = [];
       try {
-        contacts = await findDecisionMakers(company.domain, hunterKey);
+        contacts = await findDecisionMakers(company.domain, hunterKey, signal);
       } catch (err) {
+        if (ctx.cancelled) break;
         send(res, 'warning', { message: `Hunter failed for ${company.name}: ${err.message}` });
         continue;
       }
@@ -152,11 +211,32 @@ outreachRouter.post('/enrich', async (req, res) => {
       }
     }
 
-    send(res, 'complete', { message: 'Contact finding complete' });
+    if (ctx.cancelled) {
+      send(res, 'warning', { message: 'Enrichment cancelled' });
+    } else {
+      send(res, 'complete', { message: 'Contact finding complete' });
+    }
 
   } catch (err) {
-    send(res, 'error', { message: err.message });
+    if (ctx.cancelled) {
+      send(res, 'warning', { message: 'Enrichment cancelled' });
+    } else {
+      send(res, 'error', { message: err.message });
+    }
   } finally {
-    res.end();
+    run.finish();
   }
+});
+
+// ── Stop an in-flight discovery / enrichment ──────────────────────────
+outreachRouter.post('/stop', (req, res) => {
+  const { clientRunId } = req.body || {};
+  if (!clientRunId) return res.status(400).json({ error: 'clientRunId required' });
+
+  const ctx = activeRuns.get(clientRunId);
+  if (!ctx) return res.json({ ok: true, message: 'No active run' });
+
+  ctx.cancelled = true;
+  ctx.controller.abort();
+  res.json({ ok: true });
 });
