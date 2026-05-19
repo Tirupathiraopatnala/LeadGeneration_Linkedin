@@ -12,23 +12,57 @@ function getClient() {
   });
 }
 
-async function azureRequest(messages, maxTokens = 1000, signal) {
+async function azureRequest(messages, maxTokens = 1000, signal, temperature = 0.2) {
   const client = getClient();
   const response = await client.chat.completions.create({
     model: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4.1-mini',
     messages,
-    temperature: 0.2,
+    temperature,
     max_tokens: maxTokens,
   }, { signal });
   return response.choices[0]?.message?.content || '';
 }
 
-// Clean keywords for Apollo search
+// Clean keywords for Apollo search.
+//
+// History: the previous version of this prompt produced hallucinated
+// criteria (e.g. "revenue over 10 million") from an input like
+// "Businesses retail and manufacturing sector". This version is strict
+// about ONLY emitting industry/sector terms derived from words present
+// in the user's input, and is run at temperature 0 for determinism.
 export async function cleanSearchQuery(targetAudience, signal) {
   const content = await azureRequest([{
     role: 'user',
-    content: `Extract 3-5 clean search keywords from this target audience description for Apollo.io company search. Return ONLY the keywords as a comma-separated list, nothing else.\n\nTarget audience: ${targetAudience}`,
-  }], 100, signal);
+    content: `You convert a sales target-audience description into Apollo.io company-search keywords.
+
+STRICT RULES:
+1. Output ONLY industry, sector, vertical, or business-type terms.
+2. Each keyword MUST be derived from words present in the user's input. Do not invent revenue, size, location, or technology criteria that the user did not write.
+3. If the user mentions multiple industries, output each one as its own keyword.
+4. Drop generic filler that doesn't narrow Apollo's search: "businesses", "companies", "B2B", "enterprise", "mid-sized", "SMB", "organisations".
+5. If the input contains no industry/sector signal at all, return the single keyword "general business".
+
+EXAMPLES:
+Input: "Businesses in retail and manufacturing sector"
+Output: retail, manufacturing
+
+Input: "Mid-market SaaS companies with 10M+ revenue"
+Output: SaaS, software
+
+Input: "Healthcare and pharmaceutical companies in Europe"
+Output: healthcare, pharmaceutical
+
+Input: "Banks and insurance firms"
+Output: banking, insurance
+
+Input: "Logistics and supply chain businesses"
+Output: logistics, supply chain
+
+Now convert this input. Return ONLY the keywords as a comma-separated list, no prose, no quotes, no explanation:
+
+Input: "${targetAudience}"
+Output:`,
+  }], 100, signal, 0);
   return content.trim().split(',').map(k => k.trim()).filter(Boolean);
 }
 
@@ -49,7 +83,12 @@ Employees: ${companyData.num_employees || 'Unknown'}
 Location: ${companyData.hq_location || 'Unknown'}
 Website: ${companyData.website_url || 'Unknown'}
 
-SCORING RUBRIC — use the WHOLE range, do NOT cluster around 7:
+HARD DISQUALIFICATION RULES — apply these FIRST, before the rubric:
+A. If the TARGET AUDIENCE names specific industries (e.g. "retail and manufacturing") and this company's primary INDUSTRY is not one of them or a clear synonym, the score is at most 3. No exceptions for size or revenue.
+B. A company that SELLS TO the target industry but is NOT IN it does NOT match. E.g. if audience says "retail" and this is an "IT services" or "SaaS" company whose product happens to be used by retailers, that is a 2-3, NOT a high score.
+C. If TARGET AUDIENCE is generic (no industries named), skip rule A and use the rubric alone.
+
+SCORING RUBRIC — apply only if not disqualified above. Use the WHOLE range, do NOT cluster around 7:
 1-3  Weak fit. Wrong industry, wrong size, or clearly outside the audience.
 4-5  Borderline. Some matching signal but several important mismatches.
 6-7  Decent fit. Matches ICP on industry OR size — plausibly a buyer.
@@ -59,7 +98,7 @@ SCORING RUBRIC — use the WHOLE range, do NOT cluster around 7:
 Score from 0-10. Return ONLY JSON, no markdown:
 {
   "score": 8,
-  "reason": "one line explanation citing which ICP criteria matched"
+  "reason": "one line explanation. If you applied a hard disqualification rule (A or B), say which and why."
 }`,
   }], 200, signal);
 
