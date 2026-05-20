@@ -179,6 +179,8 @@ All on branch `claude/review-repo-improvements-OZNzR`.
 | `68b9613` | Add session handoff doc                                                     | This file. Designed to be read top-to-bottom by another agent picking up the branch.                              |
 | `8467418` | Outreach: lock down keyword extraction + hard-disqualify industry mismatch  | The AI keyword extractor hallucinated revenue criteria from "retail and manufacturing" and dropped the actual industries. Tightened the prompt (no inventing, examples, temp 0) and added explicit industry-mismatch disqualification rules to the scorer. Superseded by `0988b66`. |
 | `0988b66` | Outreach: deterministic Apollo search — drop AI keyword + AI score          | User correctly pointed out the whole AI-keyword + AI-scoring approach was wrong for the Apollo flow. Replaced with structured Apollo filters: industry multi-select, tech-stack multi-select (Apollo technology UIDs), location, employee size. No more `cleanSearchQuery` or `scoreCompany` call from `/discover`. |
+| `75fc801` | HANDOFF.md: bring up to date through 0988b66                                | Doc-only. Established the convention that HANDOFF.md is updated every commit, refreshed sections affected by the deterministic Apollo work.                                                                       |
+| _next_    | server: bump express.json() body limit to 25 MB                             | Default 100 KB tripped on Outreach FIND CONTACTS (sends the discovered-companies array) producing `PayloadTooLargeError: request entity too large`. Raised limit so larger lead lists and Excel exports go through. |
 
 ---
 
@@ -308,6 +310,7 @@ These are real improvements I named but didn't ship in this session. Pick from t
 - **Do not reintroduce AI keyword extraction or AI scoring into the Apollo discovery flow.** The user explicitly rejected this approach after seeing the AI hallucinate ("revenue over 10 million" from "Businesses retail and manufacturing sector") and score IT services companies as 8/10 for retail/manufacturing targets. Apollo discovery is deterministic now — keep it that way. If you think AI should re-enter the Apollo flow, it belongs in *outreach drafting* (per §5 item 5), not in *discovery*.
 - **Do not introduce any LinkedIn scraping that uses the user's `li_at` cookie** — PhantomBuster, Apify LinkedIn actors, etc. all banned by user policy. See §6.
 - **Do not recommend Proxycurl.** It shut down in 2024. People Data Labs / Coresignal are the legitimate-looking alternatives if programmatic LinkedIn person data ever becomes necessary; the agreed v1 is to skip it entirely.
+- **Do not drop the `express.json({ limit: '25mb' })` config back to the default.** A bare `express.json()` reverts to a 100 KB body cap, which trips immediately on Outreach FIND CONTACTS (full enriched-companies array) and on Excel exports of more than a couple dozen leads.
 
 ---
 
