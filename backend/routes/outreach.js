@@ -8,6 +8,61 @@ export const outreachRouter = Router();
 // Lets POST /stop find and abort whichever flow the user is running.
 const activeRuns = new Map();
 
+// Apollo's `q_organization_keyword_tags` is fuzzy — it matches against
+// company tags and marketing copy, not Apollo's industry taxonomy. So
+// sending "Retail" pulls in companies that *talk about* retail (WSJ,
+// Bloomberg, recruiters for retail, etc.), not just retailers.
+//
+// The proper fix is `organization_industry_tag_ids` with Apollo's
+// internal MongoDB IDs, but we don't have a verified mapping and
+// guessing IDs silently returns zero. As a reliable workaround, we
+// post-filter Apollo's results against `company.industry` (the actual
+// industry classification visible in the UI).
+//
+// Each user-facing industry name expands to a list of Apollo synonyms;
+// a company is kept if its industry contains ANY of those substrings.
+const INDUSTRY_SYNONYMS = {
+  'Retail':                   ['retail'],
+  'Manufacturing':            ['manufacturing'],
+  'Healthcare':               ['hospital', 'health care', 'healthcare', 'medical'],
+  'Pharmaceuticals':          ['pharmaceutical', 'biotech'],
+  'Financial Services':       ['financial services', 'capital markets', 'investment'],
+  'Banking':                  ['banking', 'bank'],
+  'Insurance':                ['insurance'],
+  'Information Technology':   ['information technology', 'computer software', 'internet', 'computer services', 'it services'],
+  'Software':                 ['software', 'saas'],
+  'Telecommunications':       ['telecommunications', 'telecom', 'wireless'],
+  'Marketing & Advertising':  ['marketing', 'advertising'],
+  'Media':                    ['media', 'broadcasting', 'publishing', 'entertainment', 'newspapers'],
+  'Real Estate':              ['real estate', 'commercial real estate'],
+  'Construction':             ['construction', 'civil engineering'],
+  'Education':                ['education', 'e-learning', 'higher education', 'primary/secondary education'],
+  'Hospitality':              ['hospitality', 'hotels', 'leisure', 'travel'],
+  'Restaurants':              ['restaurants', 'food & beverages', 'food production'],
+  'Logistics & Supply Chain': ['logistics', 'supply chain', 'transportation', 'shipping', 'warehousing'],
+  'Energy & Utilities':       ['energy', 'oil & energy', 'utilities', 'renewables', 'mining'],
+  'Consumer Goods':           ['consumer goods', 'consumer electronics', 'apparel', 'cosmetics'],
+  'Automotive':               ['automotive'],
+  'Aerospace & Defense':      ['aerospace', 'defense', 'aviation'],
+  'Legal Services':           ['legal', 'law practice'],
+  'Professional Services':    ['professional services', 'management consulting', 'consulting'],
+  'Government':               ['government', 'public policy', 'military'],
+  'Non-profit':               ['non-profit', 'nonprofit', 'civic', 'philanthropy'],
+  'Agriculture':              ['agriculture', 'farming', 'dairy'],
+  'Wholesale':                ['wholesale'],
+};
+
+function matchesSelectedIndustries(companyIndustry, selectedIndustries) {
+  if (!selectedIndustries?.length) return true;
+  const ci = (companyIndustry || '').toLowerCase().trim();
+  if (!ci) return false;
+  for (const name of selectedIndustries) {
+    const synonyms = INDUSTRY_SYNONYMS[name] || [name.toLowerCase()];
+    if (synonyms.some(s => ci.includes(s))) return true;
+  }
+  return false;
+}
+
 function send(res, event, data) {
   if (res.writableEnded || res.destroyed) return;
   try {
@@ -90,11 +145,21 @@ outreachRouter.post('/discover', async (req, res) => {
     }, apolloKey, signal);
 
     const rawCompanies = searchResult?.organizations || [];
-    send(res, 'progress', { message: `Found ${rawCompanies.length} companies` });
+    send(res, 'progress', { message: `Apollo returned ${rawCompanies.length} companies` });
+
+    // Post-filter against Apollo's industry field. See INDUSTRY_SYNONYMS
+    // comment for why — Apollo's keyword-tag search matches marketing
+    // copy, so without this we'd surface WSJ for "Retail" etc.
+    const industryFiltered = rawCompanies.filter(c => matchesSelectedIndustries(c.industry, industries));
+    if (industries.length) {
+      send(res, 'progress', {
+        message: `Filtered to ${industryFiltered.length} companies actually classified in: ${industries.join(', ')}`,
+      });
+    }
 
     // Keep only companies with at least a domain we can later use for
     // Hunter contact lookup.
-    const filtered = rawCompanies
+    const filtered = industryFiltered
       .filter(c => c.primary_domain || c.website_url)
       .map(c => ({
         ...c,

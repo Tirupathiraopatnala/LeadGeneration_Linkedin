@@ -181,6 +181,8 @@ All on branch `claude/review-repo-improvements-OZNzR`.
 | `0988b66` | Outreach: deterministic Apollo search — drop AI keyword + AI score          | User correctly pointed out the whole AI-keyword + AI-scoring approach was wrong for the Apollo flow. Replaced with structured Apollo filters: industry multi-select, tech-stack multi-select (Apollo technology UIDs), location, employee size. No more `cleanSearchQuery` or `scoreCompany` call from `/discover`. |
 | `75fc801` | HANDOFF.md: bring up to date through 0988b66                                | Doc-only. Established the convention that HANDOFF.md is updated every commit, refreshed sections affected by the deterministic Apollo work.                                                                       |
 | `821e132` | server: raise express.json() body limit to 25 MB                            | Default 100 KB tripped on Outreach FIND CONTACTS (sends the discovered-companies array) producing `PayloadTooLargeError: request entity too large`. Raised limit so larger lead lists and Excel exports go through. |
+| `3b54adb` | HANDOFF.md: backfill 821e132 hash in commit table                           | Doc-only.                                                                                                                                                                                                          |
+| _next_    | Outreach: post-filter Apollo results by actual industry                     | Selecting "Retail" still surfaced WSJ, Bloomberg, CNN, Jobot — Apollo's `q_organization_keyword_tags` matches marketing copy, not industry classification. Added `INDUSTRY_SYNONYMS` map and post-filter against `company.industry` field. Band-aid until we have verified Apollo industry tag IDs. |
 
 ---
 
@@ -212,7 +214,7 @@ STOP button posts to `/api/pipeline/stop`, also aborts the local fetch. `res.on(
 - **FIND CONTACTS** — `/enrich`: For each kept company, Hunter.io finds executives/directors (3 fallback attempts: strict → wider seniority → any email type). Returns up to 5 contacts/company.
 
 **Filter inputs (UI):**
-- `TARGET INDUSTRIES` — chip multi-select from 28 curated industries (Retail, Manufacturing, Healthcare, …). Sent to Apollo as `q_organization_keyword_tags` array. Single clean values match Apollo's industry taxonomy reliably.
+- `TARGET INDUSTRIES` — chip multi-select from 28 curated industries (Retail, Manufacturing, Healthcare, …). Sent to Apollo as `q_organization_keyword_tags` array AND post-filtered on the backend against each company's actual `industry` field (Apollo's keyword tags match marketing copy, not industry classification — without the post-filter, "Retail" returned WSJ/Bloomberg/CNN). The synonyms map is `INDUSTRY_SYNONYMS` in `routes/outreach.js`. Long-term fix would be `organization_industry_tag_ids` with verified Apollo MongoDB IDs.
 - `TECH STACK` — chip multi-select from 25 curated tech slugs (`salesforce`, `servicenow`, `sap`, `snowflake`, …). Sent to Apollo as `currently_using_any_of_technology_uids`. **Paid Apollo feature** — user confirmed they're on a paid plan.
 - `TARGET LOCATIONS` — comma-separated free text → split into array → `organization_locations`.
 - `COMPANY SIZE` — chip multi-select of numeric ranges like `"11,50"` → `organization_num_employees_ranges`.
