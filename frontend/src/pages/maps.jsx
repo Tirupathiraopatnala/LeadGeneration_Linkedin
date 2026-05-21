@@ -9,11 +9,14 @@ export default function Maps() {
     mapsRuns, activeMapsRunId, setActiveMapsRunId,
     addMapsRun, addLeadToMapsRun, completeMapsRun, deleteMapsRun,
     mapsSearches, setMapsSearches,
+    mapsStatus: status, setMapsStatus: setStatus,
+    mapsLogs: logs, setMapsLogs: setLogs,
+    addMapsLog: addLog,
   } = useSettings();
 
-  const [activeTab, setActiveTab] = useState('CONFIG');
-  const [status, setStatus] = useState('idle');
-  const [logs, setLogs] = useState([]);
+  // Default to LEADS when a scrape is already running so a returning
+  // user lands on results, not the empty config form.
+  const [activeTab, setActiveTab] = useState(() => status === 'running' ? 'LEADS' : 'CONFIG');
   const [logOpen, setLogOpen] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [maxResults, setMaxResults] = useState(20);
@@ -29,20 +32,13 @@ export default function Maps() {
   const [resolvedZips, setResolvedZips] = useState([]);
   const [resolvedCountry, setResolvedCountry] = useState(null);
   const [loadingZips, setLoadingZips] = useState(false);
+  const [manualZip, setManualZip] = useState('');
 
   // Active run
   const activeRun = mapsRuns.find(r => r.runId === activeMapsRunId)
     || mapsRuns[mapsRuns.length - 1];
   const leads = activeRun?.leads || [];
   const totalAllLeads = mapsRuns.reduce((s, r) => s + r.leads.length, 0);
-
-  function addLog(msg, type = 'info') {
-    setLogs(prev => [...prev.slice(-99), {
-      time: new Date().toLocaleTimeString(),
-      msg,
-      type,
-    }]);
-  }
 
   async function loadZips() {
   if (!country.trim() || !city.trim()) return;
@@ -58,21 +54,25 @@ export default function Maps() {
     const zipRes = await fetch(`/api/maps/zipcodes?city=${encodeURIComponent(city.trim())}&countryCode=${countryData.code}`);
     const zipData = await zipRes.json();
     setResolvedZips(zipData.zips || []);
-    setSelectedZips(zipData.zips || []);
+    setSelectedZips([]);
   } catch { }
   finally { setLoadingZips(false); }
 }
 
 function addSearch() {
   if (!business.trim() || !resolvedCountry) return;
+  // Manual ZIP wins over the suggested-chip selection. Empty = city-wide.
+  const finalZips = manualZip.trim()
+    ? [manualZip.trim()]
+    : selectedZips;
   const newSearch = {
     id: Date.now(),
     business: business.trim(),
     country: resolvedCountry.name,
     countryCode: resolvedCountry.code,
     city: city.trim(),
-    zips: selectedZips,
-    fallback: resolvedZips.length === 0,
+    zips: finalZips,
+    fallback: finalZips.length === 0,
   };
   setMapsSearches([...mapsSearches, newSearch]);
   setBusiness('');
@@ -81,6 +81,7 @@ function addSearch() {
   setResolvedZips([]);
   setSelectedZips([]);
   setResolvedCountry(null);
+  setManualZip('');
   setResolveError('');
 }
 
@@ -115,6 +116,7 @@ function addSearch() {
           searches: mapsSearches,
           apifyKey,
           maxResults,
+          clientRunId: newRunId,
         }),
       });
 
@@ -172,6 +174,24 @@ function addSearch() {
     } catch (err) {
       setStatus('error');
       addLog(`Connection error: ${err.message}`, 'error');
+    }
+  }
+
+  async function stopScrape() {
+    if (!activeMapsRunId) return;
+    addLog('Stopping scrape…', 'warn');
+    setStatus('idle');
+    completeMapsRun(activeMapsRunId);
+    try {
+      const r = await fetch('/api/maps/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientRunId: activeMapsRunId }),
+      });
+      const data = await r.json().catch(() => ({}));
+      addLog(`Stop acknowledged — ${data.aborted ?? 0} Apify run(s) aborted`, 'warn');
+    } catch (err) {
+      addLog(`Stop failed: ${err.message}`, 'error');
     }
   }
 
@@ -250,7 +270,7 @@ function addSearch() {
               <span>▶</span> RUN SCRAPER
             </button>
           ) : (
-            <button onClick={() => setStatus('idle')} style={{ padding: '10px 22px', background: 'var(--warn)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+            <button onClick={stopScrape} style={{ padding: '10px 22px', background: 'var(--warn)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', cursor: 'pointer' }}>
               ■ STOP
             </button>
           )}
@@ -277,6 +297,18 @@ function addSearch() {
             <div style={{ flex: 1, overflow: 'auto', padding: '32px 40px' }}>
               <div style={{ maxWidth: 900 }}>
 
+                {/* How it works */}
+                <div style={{ background: 'rgba(0,229,160,0.04)', border: '1px solid rgba(0,229,160,0.2)', borderRadius: 'var(--radius-lg)', marginBottom: 24, padding: '16px 24px' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--accent)', marginBottom: 10 }}>ℹ  HOW IT WORKS</div>
+                  <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.7, color: 'var(--text2)' }}>
+                    <li>Fill in <strong style={{ color: 'var(--text)' }}>business type</strong>, <strong style={{ color: 'var(--text)' }}>country</strong>, and <strong style={{ color: 'var(--text)' }}>city</strong>.</li>
+                    <li>Optional — narrow to one area: type a <strong style={{ color: 'var(--text)' }}>ZIP / pincode</strong> yourself, or pick one from the suggested chips below the form (US works best, other countries may not show suggestions).</li>
+                    <li>Leave the ZIP empty to search the whole city.</li>
+                    <li>Click <strong style={{ color: 'var(--text)' }}>+ ADD SEARCH</strong> to queue it. Add as many as you want.</li>
+                    <li>Hit <strong style={{ color: 'var(--text)' }}>RUN SCRAPER</strong> — we scrape Google Maps via Apify and only keep listings that have a phone or email.</li>
+                  </ol>
+                </div>
+
                 {/* Max results setting */}
                 <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', marginBottom: 24, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>
@@ -295,7 +327,7 @@ function addSearch() {
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text3)' }}>ADD SEARCH</span>
                   </div>
                   <div style={{ padding: '20px 24px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
                       <div>
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginBottom: 6, letterSpacing: '0.1em' }}>BUSINESS TYPE</div>
                         <input
@@ -309,7 +341,7 @@ function addSearch() {
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginBottom: 6, letterSpacing: '0.1em' }}>COUNTRY</div>
                         <input
                           value={country}
-                          onChange={e => { setCountry(e.target.value); setResolvedCountry(null); setResolvedZips([]); setSelectedZips([]); }}
+                          onChange={e => { setCountry(e.target.value); setResolvedCountry(null); setResolvedZips([]); setSelectedZips([]); setManualZip(''); }}
                           placeholder="e.g. United States"
                           style={inputStyle}
                         />
@@ -318,7 +350,7 @@ function addSearch() {
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginBottom: 6, letterSpacing: '0.1em' }}>CITY</div>
                         <input
                           value={city}
-                          onChange={e => { setCity(e.target.value); setResolvedCountry(null); setResolvedZips([]); setSelectedZips([]); }}
+                          onChange={e => { setCity(e.target.value); setResolvedCountry(null); setResolvedZips([]); setSelectedZips([]); setManualZip(''); }}
                           onBlur={loadZips}
                           placeholder="e.g. Seattle"
                           style={inputStyle}
@@ -329,28 +361,36 @@ function addSearch() {
                           </div>
                         )}
                       </div>
+                      <div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', marginBottom: 6, letterSpacing: '0.1em' }}>ZIP / PINCODE <span style={{ color: 'var(--text3)', fontWeight: 400, textTransform: 'lowercase', letterSpacing: 0 }}>(optional)</span></div>
+                        <input
+                          value={manualZip}
+                          onChange={e => { setManualZip(e.target.value); if (e.target.value.trim()) setSelectedZips([]); }}
+                          placeholder="e.g. 98101"
+                          style={inputStyle}
+                        />
+                      </div>
                     </div>
 
-                    {/* ZIP selector — appears automatically after city filled */}
+                    {/* ZIP selector — single-select to keep the search fast */}
                     {resolvedZips.length > 0 && (
                       <div style={{ marginBottom: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', letterSpacing: '0.1em' }}>SELECT ZIP CODES</span>
-                          <button onClick={() => setSelectedZips(resolvedZips)} style={{ background: 'none', color: 'var(--accent)', fontSize: 10, fontFamily: 'var(--font-mono)', cursor: 'pointer', padding: '1px 6px', border: '1px solid rgba(0,229,160,0.3)', borderRadius: 4 }}>ALL</button>
-                          <button onClick={() => setSelectedZips([])} style={{ background: 'none', color: 'var(--text3)', fontSize: 10, fontFamily: 'var(--font-mono)', cursor: 'pointer', padding: '1px 6px', border: '1px solid var(--border)', borderRadius: 4 }}>NONE</button>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)', letterSpacing: '0.1em' }}>SELECT ONE ZIP / PINCODE</span>
+                          <button onClick={() => setSelectedZips([])} style={{ background: 'none', color: 'var(--text3)', fontSize: 10, fontFamily: 'var(--font-mono)', cursor: 'pointer', padding: '1px 6px', border: '1px solid var(--border)', borderRadius: 4 }}>CLEAR</button>
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>
-                            {selectedZips.length} selected — up to <strong style={{ color: 'var(--accent)' }}>{selectedZips.length * maxResults}</strong> results
+                            {selectedZips.length === 1
+                              ? <>1 selected — up to <strong style={{ color: 'var(--accent)' }}>{maxResults}</strong> results</>
+                              : <>none selected — city-wide search, up to <strong style={{ color: 'var(--accent)' }}>{maxResults}</strong> results</>}
                           </span>
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           {resolvedZips.map(zip => {
-                            const isSelected = selectedZips.includes(zip);
+                            const isSelected = selectedZips[0] === zip;
                             return (
                               <button
                                 key={zip}
-                                onClick={() => setSelectedZips(prev =>
-                                  isSelected ? prev.filter(z => z !== zip) : [...prev, zip]
-                                )}
+                                onClick={() => { setSelectedZips(isSelected ? [] : [zip]); setManualZip(''); }}
                                 style={{
                                   padding: '4px 10px',
                                   borderRadius: 20,
@@ -372,9 +412,9 @@ function addSearch() {
                       </div>
                     )}
 
-                    {resolvedZips.length === 0 && resolvedCountry && !loadingZips && (
-                      <div style={{ marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--warn)' }}>
-                        ⚠ No ZIP codes found — will search by city name only
+                    {resolvedZips.length === 0 && resolvedCountry && !loadingZips && !manualZip.trim() && (
+                      <div style={{ marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
+                        No ZIP suggestions for this city — type one in the ZIP field above, or leave empty to search city-wide.
                       </div>
                     )}
 
@@ -386,11 +426,11 @@ function addSearch() {
 
                     <button
                       onClick={addSearch}
-                      disabled={!business.trim() || !resolvedCountry || (resolvedZips.length > 0 && selectedZips.length === 0)}
+                      disabled={!business.trim() || !resolvedCountry}
                       style={{
                         padding: '9px 20px',
-                        background: (!business.trim() || !resolvedCountry || (resolvedZips.length > 0 && selectedZips.length === 0)) ? 'var(--surface2)' : 'var(--accent)',
-                        color: (!business.trim() || !resolvedCountry || (resolvedZips.length > 0 && selectedZips.length === 0)) ? 'var(--text3)' : '#000',
+                        background: (!business.trim() || !resolvedCountry) ? 'var(--surface2)' : 'var(--accent)',
+                        color: (!business.trim() || !resolvedCountry) ? 'var(--text3)' : '#000',
                         fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)',
                         cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
                       }}

@@ -24,9 +24,16 @@ exportRouter.post('/excel', (req, res) => {
     const wb = XLSX.utils.book_new();
 
     // ── Sheet 1: Qualified Leads ────────────────────────────────────────
+    //
+    // Email and Phone columns are kept blank by the LinkedIn pipeline
+    // since the Apollo /people/match enrichment step was removed.
+    // They stay in the export so the user can paste in contact info
+    // gathered from other sources (Hunter, manual lookup, etc.).
     const leadsData = leads.map((l, i) => ({
       '#': i + 1,
       'Name': l.commenterName || '',
+      'Email': l.email || '',
+      'Phone': l.phone || '',
       'Current Role': l.currentRole || l.designation || '',
       'Current Company': l.currentCompany || l.companyName || '',
       'Industry': l.companyIndustry || '',
@@ -52,6 +59,8 @@ exportRouter.post('/excel', (req, res) => {
     ws1['!cols'] = [
       { wch: 4 },   // #
       { wch: 25 },  // Name
+      { wch: 35 },  // Email
+      { wch: 18 },  // Phone
       { wch: 30 },  // Role
       { wch: 30 },  // Company
       { wch: 20 },  // Industry
