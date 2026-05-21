@@ -183,6 +183,8 @@ All on branch `claude/review-repo-improvements-OZNzR`.
 | `821e132` | server: raise express.json() body limit to 25 MB                            | Default 100 KB tripped on Outreach FIND CONTACTS (sends the discovered-companies array) producing `PayloadTooLargeError: request entity too large`. Raised limit so larger lead lists and Excel exports go through. |
 | `3b54adb` | HANDOFF.md: backfill 821e132 hash in commit table                           | Doc-only.                                                                                                                                                                                                          |
 | `cf6f8d0` | Outreach: post-filter Apollo results by actual industry                     | Selecting "Retail" still surfaced WSJ, Bloomberg, CNN, Jobot — Apollo's `q_organization_keyword_tags` matches marketing copy, not industry classification. Added `INDUSTRY_SYNONYMS` map and post-filter against `company.industry` field. Band-aid until we have verified Apollo industry tag IDs. |
+| `1da9a7a` | HANDOFF.md: backfill cf6f8d0 hash                                           | Doc-only.                                                                                                                                                                                                          |
+| _next_    | Pipeline: remove Apollo /people/match enrichment from LinkedIn flow         | The user's Apollo plan didn't include `/people/match` and they're sourcing contact info elsewhere. Removed the Apollo enrichment step from `routes/pipeline.js`, dropped Email Status / Email Type columns and the Apollo summary stats from `routes/export.js`. Email + Phone columns stay (now blank, populated externally). `matchPerson` left in `services/apollo.js` as dead code in case it's wanted again. |
 
 ---
 
@@ -190,20 +192,15 @@ All on branch `claude/review-repo-improvements-OZNzR`.
 
 ### LinkedIn pipeline (`routes/pipeline.js` + `pages/LinkedIn.jsx`)
 
-**Flow:** Keywords → search posts → fetch comments → AI screen (Round 1, HIGH/MID/HIDDEN intent) → dedup → enrich profile + company → AI qualify (Round 2, 1–10 confidence) → optional Apollo enrichment → emit qualified leads via SSE.
+**Flow:** Keywords → search posts → fetch comments → AI screen (Round 1, HIGH/MID/HIDDEN intent) → dedup → enrich profile + company → AI qualify (Round 2, 1–10 confidence) → emit qualified leads via SSE.
 
 **Cancellation:** Backend route registers an `AbortController` in `activeRuns`. Signal is threaded through every external call:
 - `searchPosts`, `getComments`, `getProfile`, `searchCompany`, `getCompanyDetails` (ConnectSafely)
 - `screenComments`, `deepQualify` (Azure OpenAI)
-- `matchPerson` (Apollo)
 
 STOP button posts to `/api/pipeline/stop`, also aborts the local fetch. `res.on('close')` covers client disconnect.
 
-**Apollo enrichment:**
-- Uses `/api/v1/people/match` with `reveal_personal_emails: true` and `reveal_phone_number: true`.
-- Detects Apollo's locked-email sentinel `email_not_unlocked@domain.com` and surfaces it as `emailLocked: true`. Free-tier emails come back locked; the UI shows 🔒.
-- Lead object gains: `email`, `emailType`, `emailStatus`, `emailLocked`, `phone`, `apolloPersonId`.
-- Excel export gained Email / Email Status / Email Type / Phone columns and an "APOLLO ENRICHMENT" hit-rate section in the Summary sheet.
+**Contact info (email / phone):** The pipeline used to call Apollo `/people/match` after Round 2 to attach a verified email + phone to each lead, but the user's Apollo plan didn't include that endpoint and they're sourcing contact info externally now. Removed in `_next_` commit. The Excel export still has `Email` and `Phone` columns — they come out blank from the pipeline and are intended to be filled in by the user from their preferred contact source (Hunter, manual lookup, paid list). `matchPerson` in `services/apollo.js` is now dead code; left in place in case enrichment is wanted back. The `🔒 locked` UI affordance was removed from the LinkedIn lead row.
 
 **Known limitation:** Round 2 is still sequential (`for li in enriched`). Step 1, 2, 4 parallelize in batches of 5 but Round 2 is one-at-a-time. ~5–10× speedup available.
 
