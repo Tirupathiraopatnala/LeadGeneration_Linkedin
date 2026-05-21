@@ -185,6 +185,8 @@ All on branch `claude/review-repo-improvements-OZNzR`.
 | `cf6f8d0` | Outreach: post-filter Apollo results by actual industry                     | Selecting "Retail" still surfaced WSJ, Bloomberg, CNN, Jobot — Apollo's `q_organization_keyword_tags` matches marketing copy, not industry classification. Added `INDUSTRY_SYNONYMS` map and post-filter against `company.industry` field. Band-aid until we have verified Apollo industry tag IDs. |
 | `1da9a7a` | HANDOFF.md: backfill cf6f8d0 hash                                           | Doc-only.                                                                                                                                                                                                          |
 | `38997b4` | Pipeline: remove Apollo /people/match enrichment from LinkedIn flow         | The user's Apollo plan didn't include `/people/match` and they're sourcing contact info elsewhere. Removed the Apollo enrichment step from `routes/pipeline.js`, dropped Email Status / Email Type columns and the Apollo summary stats from `routes/export.js`. Email + Phone columns stay (now blank, populated externally). `matchPerson` left in `services/apollo.js` as dead code in case it's wanted again. |
+| `a384d1e` | HANDOFF.md: backfill 38997b4 hash                                           | Doc-only.                                                                                                                                                                                                          |
+| _next_    | Add Lookup tab — Apify 3-actor LinkedIn profile dossier                     | Ported from Kalyani-Padala fork commit `fa139cc`, scoped down to *only* the new tab. Three new backend files (`services/apify-pipeline.js`, `services/linkedin-llm.js`, `routes/apify-summary.js`) plus the `apifySummaryRouter` mount in `server.js`. New self-contained `pages/Lookup.jsx` + sidebar item + route in `App.jsx`. Deliberately did NOT touch `SummaryPanel.jsx`, `LinkedIn.jsx`, or `Outreach.jsx` — the existing PhantomBuster-based summary on those pages keeps working unchanged. |
 
 ---
 
@@ -250,6 +252,26 @@ STOP button posts to `/api/pipeline/stop`, also aborts the local fetch. `res.on(
 ### Guide page (`pages/HowItWorks.jsx`, route `/guide`)
 
 New page added in commit `3c81d98`. Plain-English reference for sales users. Renders the same scoring rubric and intent tiers used elsewhere, plus a quick-decision matrix and practical tips. No state, no API calls — pure documentation rendered in React for visual consistency.
+
+### Lookup page (`pages/Lookup.jsx`, route `/lookup`)
+
+Ported from the Kalyani-Padala fork. Standalone tab: paste any LinkedIn profile URL → get a full AI dossier.
+
+**Backend pipeline (`backend/services/apify-pipeline.js`):** three Apify actors in sequence per profile.
+- Actor 1 `apt_marble~linkedin-profile-scraper` — basic profile + activity feed.
+- Actor 2 `data-slayer~linkedin-profile-scraper` — full profile (experience, education, skills, email).
+- Actor 3 `pratikdani~linkedin-posts-scraper` — fetches full post text for items flagged as commented/truncated by Actor 1.
+None of these use the user's `li_at` cookie — they run on Apify's infrastructure. This is the **no-PhantomBuster path** the user wanted (§6 rule).
+
+**LLM step (`backend/services/linkedin-llm.js`):** builds a rich prompt with identity + career + activity sections, calls Azure OpenAI (`gpt-4.1-mini` deployment), parses a structured dossier: `interests`, `expertise`, `summary`, `careerStory`, `activityNarrative`, plus an `outreach` block with `hook` / `talkingPoints` / `icebreakers` / `bestAngle`.
+
+**Route (`backend/routes/apify-summary.js`):** `POST /api/apify-summary/profile` body `{ profileUrl, apifyToken }`. Mounted at `/api/apify-summary` in `server.js`. Returns the dossier in a stable response shape consumed by `pages/Lookup.jsx`.
+
+**Frontend (`pages/Lookup.jsx`):** self-contained. Left sidebar with input + history of looked-up URLs (cached & non-cached badges). Right panel renders the AI dossier inline (sections, tag chips, outreach guide). Per-URL localStorage cache keyed `apify_summary_cache_<url>`. Module-level `inFlight` tracker so a fetch survives unmount and shows the result when the user returns to the page. No SummaryPanel.jsx import on purpose — keeps Lookup independent of the existing PhantomBuster-based summary used by LinkedIn + Outreach.
+
+**Apify token source:** `apifyToken` is read from `localStorage.getItem('apifyKey')` (the same key Maps already uses). No new settings field. Falls back to `process.env.APIFY_TOKEN` server-side if not in body.
+
+**Caveats:** Apify run takes 2–4 minutes per profile (3 actors sequentially). UI shows a spinner with a note. No STOP button or backend cancellation registry for this route — added scope deliberately deferred since lookups are one-at-a-time, low cost (~$0.20–0.50 per profile), and small enough that polling-vs-blocking complexity isn't worth it yet. If lookups need to be abortable later, mirror the `activeRuns` pattern from the other flows.
 
 ---
 
