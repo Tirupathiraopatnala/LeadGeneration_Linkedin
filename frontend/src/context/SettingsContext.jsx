@@ -78,15 +78,31 @@ export function SettingsProvider({ children }) {
   const [productDescription, setProductDescriptionState] = useState(
     localStorage.getItem('productDescription') || ''
   );
+  // targetAudience is deprecated — replaced by structured targetIndustries
+  // dropdown. Still read for backwards-compat / outreach-draft context.
   const [targetAudience, setTargetAudienceState] = useState(
     localStorage.getItem('targetAudience') || ''
   );
   const [targetJobTitles, setTargetJobTitlesState] = useState(
     localStorage.getItem('targetJobTitles') || 'CEO, Founder, CTO, VP of Engineering'
   );
+  // Deprecated alongside the AI scoring step; left readable to avoid
+  // breaking saved state but no longer used.
   const [minCompanyScore, setMinCompanyScoreState] = useState(
     Number(localStorage.getItem('minCompanyScore')) || 7
   );
+  const [targetIndustries, setTargetIndustriesState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('targetIndustries');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [targetTechnologies, setTargetTechnologiesState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('targetTechnologies');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
 
   // ── Outreach Runtime State ─────────────────────────────────────────
   const [outreachRuns, setOutreachRunsState] = useState(() => {
@@ -96,6 +112,16 @@ export function SettingsProvider({ children }) {
     } catch { return []; }
   });
   const [activeOutreachRunId, setActiveOutreachRunId] = useState(null);
+  const [outreachStatus, setOutreachStatus] = useState('idle');
+  const [outreachLogs, setOutreachLogs] = useState([]);
+
+  function addOutreachLog(msg, type = 'info') {
+    setOutreachLogs(prev => [...prev.slice(-99), {
+      time: new Date().toLocaleTimeString(),
+      msg,
+      type,
+    }]);
+  }
 
   // ── Maps Runtime State ─────────────────────────────────────────────
   const [mapsRuns, setMapsRunsState] = useState(() => {
@@ -105,6 +131,16 @@ export function SettingsProvider({ children }) {
     } catch { return []; }
   });
   const [activeMapsRunId, setActiveMapsRunId] = useState(null);
+  const [mapsStatus, setMapsStatus] = useState('idle');
+  const [mapsLogs, setMapsLogs] = useState([]);
+
+  function addMapsLog(msg, type = 'info') {
+    setMapsLogs(prev => [...prev.slice(-99), {
+      time: new Date().toLocaleTimeString(),
+      msg,
+      type,
+    }]);
+  }
 
   // Maps searches config
   const [mapsSearches, setMapsSearchesState] = useState(() => {
@@ -177,11 +213,25 @@ const [activeRunId, setActiveRunId] = useState(null);
 const [targetLocations, setTargetLocationsState] = useState(
   localStorage.getItem('targetLocations') || 'United States'
 );
+// Apollo's `organization_num_employees_ranges` expects comma-separated
+// numeric ranges (e.g. "11,50"), not the old letter codes (A-H) this
+// app started with. Migrate any legacy values left in localStorage.
+const LEGACY_RANGE_MAP = {
+  A: '1,10',     B: '11,50',     C: '51,200',     D: '201,500',
+  E: '501,1000', F: '1001,5000', G: '5001,10000', H: '10001',
+};
+const DEFAULT_EMPLOYEE_RANGES = ['11,50', '51,200', '201,500'];
+
 const [employeeRanges, setEmployeeRangesState] = useState(() => {
   try {
     const stored = localStorage.getItem('employeeRanges');
-    return stored ? JSON.parse(stored) : ['B', 'C', 'D'];
-  } catch { return ['B', 'C', 'D']; }
+    if (!stored) return DEFAULT_EMPLOYEE_RANGES;
+    const parsed = JSON.parse(stored);
+    const migrated = parsed
+      .map(v => LEGACY_RANGE_MAP[v] || v)
+      .filter(v => /^\d+(,\d+)?$/.test(v));
+    return migrated.length ? migrated : DEFAULT_EMPLOYEE_RANGES;
+  } catch { return DEFAULT_EMPLOYEE_RANGES; }
 });
 
 function setTargetLocations(v) { setTargetLocationsState(v); localStorage.setItem('targetLocations', v); }
@@ -269,6 +319,8 @@ function deleteRun(runId) {
  
   function setProductDescription(v) { setProductDescriptionState(v); localStorage.setItem('productDescription', v); }
   function setTargetAudience(v) { setTargetAudienceState(v); localStorage.setItem('targetAudience', v); }
+  function setTargetIndustries(v) { setTargetIndustriesState(v); localStorage.setItem('targetIndustries', JSON.stringify(v)); }
+  function setTargetTechnologies(v) { setTargetTechnologiesState(v); localStorage.setItem('targetTechnologies', JSON.stringify(v)); }
   function setTargetJobTitles(v) { setTargetJobTitlesState(v); localStorage.setItem('targetJobTitles', v); }
   function setMinCompanyScore(v) { setMinCompanyScoreState(v); localStorage.setItem('minCompanyScore', String(v)); }
 
@@ -326,9 +378,12 @@ function deleteRun(runId) {
     });
   }
 
+  // Configured = API keys present + at least one structured filter chosen.
+  // Product description is no longer required for discovery (it's used
+  // only by the outreach-draft step, when that exists).
   const isOutreachConfigured = Boolean(
     apolloKey.trim() && hunterKey.trim() && apifyKey.trim() &&
-    productDescription.trim() && targetAudience.trim()
+    (targetIndustries.length || targetTechnologies.length || targetLocations.trim())
   );
 
   function saveSettings(key, id) {
@@ -371,6 +426,8 @@ function deleteRun(runId) {
         apifyKey, setApifyKey,
         productDescription, setProductDescription,
         targetAudience, setTargetAudience,
+        targetIndustries, setTargetIndustries,
+        targetTechnologies, setTargetTechnologies,
         targetJobTitles, setTargetJobTitles,
         minCompanyScore, setMinCompanyScore,
         isOutreachConfigured,
@@ -384,6 +441,11 @@ function deleteRun(runId) {
         addLeadToOutreachRun,
         completeOutreachRun,
         deleteOutreachRun,
+        outreachStatus,
+        setOutreachStatus,
+        outreachLogs,
+        setOutreachLogs,
+        addOutreachLog,
         targetLocations, setTargetLocations,
         employeeRanges, setEmployeeRanges,
         // Auth check
@@ -398,6 +460,11 @@ function deleteRun(runId) {
         deleteMapsRun,
         mapsSearches,
         setMapsSearches,
+        mapsStatus,
+        setMapsStatus,
+        mapsLogs,
+        setMapsLogs,
+        addMapsLog,
 
         // Pipeline runtime (persists across navigation)
         pipelineStatus,

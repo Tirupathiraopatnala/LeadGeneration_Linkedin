@@ -8,11 +8,13 @@ import { mapsRouter } from './routes/maps.js';
 import { summaryRouter } from './routes/linkedin-summary.js';
 import { apifySummaryRouter } from './routes/apify-summary.js';
 
-
-
 const app = express();
 app.use(cors({ origin: '*' }));
-app.use(express.json());
+// Default express.json() limit is 100 KB, which trips the moment the
+// frontend POSTs an enriched-companies array (Outreach FIND CONTACTS)
+// or a multi-hundred-lead Excel export. 25 MB is generous headroom
+// without becoming a memory-DoS risk for a local-dev backend.
+app.use(express.json({ limit: '25mb' }));
 app.use('/api/summary', summaryRouter);
 app.use('/api/pipeline', pipelineRouter);
 app.use('/api/export', exportRouter);

@@ -9,7 +9,7 @@
  *   outreach:          { hook, talkingPoints, icebreakers, bestAngle }
  *   summary:           string
  *   careerStory:       string
- *   activityNarrative: string  ← NEW: what they post/comment/react to
+ *   activityNarrative: string
  * }
  */
 
@@ -38,11 +38,11 @@ function formatExperience(experience = []) {
     const desc = (e.job_description || []).slice(0, 3).join(' | ');
     return [
       `${i + 1}. ${e.job_title || 'Unknown role'} @ ${e.company_name || 'Unknown'}`,
-      period         ? `   Period   : ${period}`            : '',
-      e.job_location ? `   Location : ${e.job_location}`    : '',
+      period             ? `   Period   : ${period}`             : '',
+      e.job_location     ? `   Location : ${e.job_location}`     : '',
       e.company_industry ? `   Industry : ${e.company_industry}` : '',
       e.employment_type  ? `   Type     : ${e.employment_type}`  : '',
-      desc           ? `   Details  : ${desc}`              : '',
+      desc               ? `   Details  : ${desc}`               : '',
     ].filter(Boolean).join('\n');
   }).join('\n\n');
 }
@@ -56,8 +56,8 @@ function formatEducation(education = []) {
     const fields = (e.fields_of_study || []).join(', ');
     return [
       `${i + 1}. ${e.degree || 'Degree'} — ${e.university_name || 'Unknown'}`,
-      years  ? `   Years  : ${years}`  : '',
-      fields ? `   Fields : ${fields}` : '',
+      years   ? `   Years  : ${years}`  : '',
+      fields  ? `   Fields : ${fields}` : '',
       e.grade ? `   Grade  : ${e.grade}` : '',
     ].filter(Boolean).join('\n');
   }).join('\n\n');
@@ -82,9 +82,8 @@ function formatActivity(activityFeed = []) {
   const comments = activityFeed.filter(a => a.interaction_type === 'commented' && a.person_comment);
   const reacted  = activityFeed.filter(a => ['reacted', 'liked'].includes(a.interaction_type) && a.post_text);
 
-  // ── Posts they published ──────────────────────────────────────────
   const postsText = posts.slice(0, 10).map((p, i) => {
-    const likes    = p.post_likes    != null ? `${p.post_likes} likes`    : '';
+    const likes    = p.post_likes    != null ? `${p.post_likes} likes`       : '';
     const cmts     = p.post_comments != null ? `${p.post_comments} comments` : '';
     const stats    = [likes, cmts].filter(Boolean).join(' | ');
     const hashtags = (p.post_hashtags || []).slice(0, 5).join(' ');
@@ -94,9 +93,8 @@ function formatActivity(activityFeed = []) {
     ].join('\n');
   }).join('\n\n---\n\n') || 'No original posts found.';
 
-  // ── Comments they left ────────────────────────────────────────────
   const commentsText = comments.slice(0, 10).map((c, i) => {
-    const originalPost = (c.post_text     || '').substring(0, 600);
+    const originalPost = (c.post_text      || '').substring(0, 600);
     const theirComment = (c.person_comment || '').substring(0, 600);
     const author       = c.post_author_url ? `post by ${c.post_author_url}` : '';
     return [
@@ -106,7 +104,6 @@ function formatActivity(activityFeed = []) {
     ].join('\n');
   }).join('\n\n---\n\n') || 'No comments found.';
 
-  // ── Content they reacted/liked ────────────────────────────────────
   const reactedText = reacted.slice(0, 8).map((r, i) => {
     const hashtags = (r.post_hashtags || []).slice(0, 5).join(' ');
     return [
@@ -137,8 +134,7 @@ export async function generateApifySummary(record) {
     ? career.volunteer.slice(0, 3).map(v => `${v.role || ''} @ ${v.organization || ''}`).join(', ')
     : 'None listed';
 
-  const aboutText = (identity.about || 'Not provided').substring(0, 1000);
-
+  const aboutText     = (identity.about || 'Not provided').substring(0, 1000);
   const activityStats = record.summary || {};
 
   const prompt = `You are a professional analyst preparing an outreach dossier on a LinkedIn contact.
@@ -149,16 +145,16 @@ Always refer to the person by their first name "${firstName}", never "this indiv
 IDENTITY
 ════════════════════════════════════════════════════
 Full Name    : ${identity.fullName       || 'Unknown'}
-Headline     : ${identity.headline      || 'Unknown'}
+Headline     : ${identity.headline       || 'Unknown'}
 Company      : ${identity.currentCompany || 'Unknown'} (${identity.companyIndustry || 'Unknown industry'})
 Website      : ${identity.companyWebsite || 'Unknown'}
-Location     : ${identity.location      || 'Unknown'}
-Country      : ${identity.country       || 'Unknown'}
-Email        : ${identity.email         || 'Not found'}
-Followers    : ${identity.followers     || 0}
-Connections  : ${identity.connections   || 0}
-Premium      : ${identity.isPremium     ? 'Yes' : 'No'}
-Creator Mode : ${identity.isCreator     ? 'Yes' : 'No'}
+Location     : ${identity.location       || 'Unknown'}
+Country      : ${identity.country        || 'Unknown'}
+Email        : ${identity.email          || 'Not found'}
+Followers    : ${identity.followers      || 0}
+Connections  : ${identity.connections    || 0}
+Premium      : ${identity.isPremium      ? 'Yes' : 'No'}
+Creator Mode : ${identity.isCreator      ? 'Yes' : 'No'}
 
 ABOUT / BIO:
 ${aboutText}
@@ -258,14 +254,14 @@ Respond ONLY with this JSON (no markdown, no explanation, no extra fields):
   const raw   = response.choices[0]?.message?.content || '{}';
   const clean = raw
     .replace(/```json|```/g, '')
-    .replace(/\\"/g, '"')     // fix escaped quotes
-    .replace(/\\\\/g, '\\')  // fix double-escaped backslashes
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
     .trim();
 
   try {
     return JSON.parse(clean);
   } catch (e) {
-    // second attempt — extract just the JSON object
+    // Fallback — extract the first JSON object substring and try again.
     const match = raw.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -283,20 +279,4 @@ Respond ONLY with this JSON (no markdown, no explanation, no extra fields):
       outreach: { hook: '', talkingPoints: [], icebreakers: [], bestAngle: '' },
     };
   }
-
-
-  try {
-  return JSON.parse(clean);
-} catch (e) {
-  console.error('[linkedin-llm] JSON parse failed:', e.message);
-  console.error('[linkedin-llm] Raw response was:', raw.substring(0, 500));
-  return {
-    interests:         [],
-    expertise:         [],
-    summary:           'Could not generate summary.',
-    careerStory:       '',
-    activityNarrative: '',
-    outreach: { hook: '', talkingPoints: [], icebreakers: [], bestAngle: '' },
-  };
-}
 }

@@ -116,7 +116,7 @@ export default function LinkedIn() {
       const res = await fetch('/api/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectSafelyKey, accountId, keywords, pipelineSettings }),
+        body: JSON.stringify({ connectSafelyKey, accountId, keywords, pipelineSettings, clientRunId: newRunId }),
         signal: controller.signal,
       });
 
@@ -171,10 +171,24 @@ export default function LinkedIn() {
     }
   }
 
-  function stopPipeline() {
-    abortRef.current?.abort();
+  async function stopPipeline() {
+    addLog('Stopping pipeline…', 'warn');
     setStatus('idle');
-    addLog('Pipeline stopped by user', 'warn');
+    if (activeRunId) completeRun(activeRunId);
+    if (activeRunId) {
+      try {
+        await fetch('/api/pipeline/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientRunId: activeRunId }),
+        });
+        addLog('Stop acknowledged — backend aborted', 'warn');
+      } catch (err) {
+        addLog(`Stop failed: ${err.message}`, 'error');
+      }
+    }
+    // Also abort the local fetch so the SSE reader unwinds immediately.
+    abortRef.current?.abort();
   }
 
   async function downloadExcel(runsToExport, filename, exportType = 'single') {
@@ -670,12 +684,25 @@ function LeadRow({ lead }) {
   );
 }
 
-function Row({ k, v, isLink }) {
+function Row({ k, v, isLink, copyable }) {
+  const [copied, setCopied] = useState(false);
   if (!v) return null;
+
+  function copy(e) {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(v);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
+
   return (
     <span style={{ display: 'flex', gap: 8, marginBottom: 2 }}>
       <span style={{ color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 10, width: 70, flexShrink: 0 }}>{k}</span>
-      {isLink ? <a href={v.startsWith('http') ? v : `https://${v}`} target="_blank" rel="noreferrer" style={{ color: 'var(--info)', fontSize: 12 }}>{v}</a> : <span>{v}</span>}
+      {isLink
+        ? <a href={v.startsWith('http') ? v : `https://${v}`} target="_blank" rel="noreferrer" style={{ color: 'var(--info)', fontSize: 12 }}>{v}</a>
+        : copyable
+          ? <span onClick={copy} title="Click to copy" style={{ cursor: 'pointer', color: copied ? 'var(--accent)' : 'var(--text)', fontSize: 12, userSelect: 'all' }}>{copied ? '✓ copied' : v}</span>
+          : <span>{v}</span>}
     </span>
   );
 }

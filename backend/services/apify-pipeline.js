@@ -4,6 +4,11 @@
  *   Actor 1: apt_marble   → basic profile + activity feed
  *   Actor 2: data-slayer  → full profile (experience, education, skills, email)
  *   Actor 3: pratikdani   → full post text for commented/truncated items
+ *
+ * Brought in from Kalyani-Padala fork commit fa139cc. Replaces the
+ * PhantomBuster-based linkedin-summary route. No personal LinkedIn
+ * cookie required — all three actors handle their own scraping
+ * infrastructure on Apify's side.
  */
 
 const BASE = 'https://api.apify.com/v2/acts';
@@ -97,7 +102,8 @@ async function runAptMarble(profileUrl, apiKey) {
 async function runDataSlayer(profileUrl, apiKey) {
   console.log('[apify] Actor 2: data-slayer → experience, education, skills, email...');
 
-  const raw = await callActor(EP.slayer, { linkedin_urls: [profileUrl], extract_email: true }, apiKey);  const result = first(raw);
+  const raw = await callActor(EP.slayer, { linkedin_urls: [profileUrl], extract_email: true }, apiKey);
+  const result = first(raw);
 
   if (!result) {
     console.warn('[apify]   ⚠️  No data returned from data-slayer');
@@ -122,7 +128,6 @@ async function runDataSlayer(profileUrl, apiKey) {
 // ── Actor 3: pratikdani ────────────────────────────────────────────────
 
 async function fetchPost(postUrl, apiKey) {
-  
   try {
     const raw = await callActor(EP.pratik, { url: postUrl }, apiKey, 120000);
     return first(raw);
@@ -210,13 +215,13 @@ function buildActivityFeed(enrichedItems) {
       post_image:            item.img,
       post_text:             postText,
       person_comment:        personComment,
-      post_date:             item._fetched_date        || null,
-      post_likes:            item._fetched_likes       || null,
-      post_comments:         item._fetched_comments    || null,
-      post_hashtags:         item._fetched_hashtags    || null,
+      post_date:             item._fetched_date          || null,
+      post_likes:            item._fetched_likes         || null,
+      post_comments:         item._fetched_comments      || null,
+      post_hashtags:         item._fetched_hashtags      || null,
       post_tagged_people:    item._fetched_tagged_people || null,
-      post_author_url:       item._fetched_author_url  || null,
-      post_images:           item._fetched_images      || null,
+      post_author_url:       item._fetched_author_url    || null,
+      post_images:           item._fetched_images        || null,
       post_embedded_links:   item._fetched_embedded_links || null,
       context_complete:      contextComplete,
       original_post_available: originalPostAvailable,
@@ -320,7 +325,6 @@ export async function runApifyPipeline(profileUrl, apiKey) {
 
   const apt    = await runAptMarble(profileUrl, apiKey);
   const slayer = await runDataSlayer(profileUrl, apiKey);
-
 
   const rawActivity  = apt?.recentActivity || [];
   const richActivity = await enrichActivity(rawActivity, apiKey);
