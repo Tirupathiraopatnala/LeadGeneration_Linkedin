@@ -6,12 +6,14 @@ import Outreach from "./pages/Outreach";
 import Maps from "./pages/Maps";
 import HowItWorks from "./pages/HowItWorks";
 import Lookup from "./pages/Lookup";
+// CompanyLookup removed — company intelligence is now the 🏢 tab inside Lookup
 
 const NAV_ITEMS = [
   { to: "/",         label: "LinkedIn",  icon: "in" },
-  { to: "/outreach", label: "Apollo",  icon: "🎯" },
+  { to: "/outreach", label: "Apollo",    icon: "🎯" },
   { to: "/maps",     label: "Maps",      icon: "🗺" },
   { to: "/lookup",   label: "Lookup",    icon: "🔍" },
+  // { to: "/company" } removed — merged into /lookup
   { to: "/guide",    label: "Guide",     icon: "?" },
   { to: "/settings", label: "Settings",  icon: "⚙" },
 ];
@@ -36,18 +38,13 @@ function Sidebar() {
       <div style={{
         padding: open ? "20px 16px 16px" : "20px 10px 16px",
         borderBottom: "1px solid var(--border)",
-        display: 'flex',
-        alignItems: 'center',
+        display: 'flex', alignItems: 'center',
         justifyContent: open ? 'space-between' : 'center',
       }}>
         {open && (
           <div>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text3)", letterSpacing: "0.15em", marginBottom: 4 }}>
-              LEAD GEN
-            </div>
-            <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: "-0.5px", color: "var(--accent)" }}>
-              Pipeline
-            </div>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text3)", letterSpacing: "0.15em", marginBottom: 4 }}>LEAD GEN</div>
+            <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: "-0.5px", color: "var(--accent)" }}>Pipeline</div>
           </div>
         )}
         <button
@@ -63,25 +60,17 @@ function Sidebar() {
       <nav style={{ padding: "12px 8px", flex: 1 }}>
         {NAV_ITEMS.map(({ to, label, icon }) => (
           <NavLink
-            key={to}
-            to={to}
-            end={to === "/"}
-            title={!open ? label : undefined}
+            key={to} to={to} end={to === "/"} title={!open ? label : undefined}
             style={({ isActive }) => ({
-              display: "flex",
-              alignItems: "center",
+              display: "flex", alignItems: "center",
               justifyContent: open ? 'flex-start' : 'center',
-              gap: 10,
-              padding: open ? "10px 14px" : "10px",
-              borderRadius: "var(--radius)",
-              marginBottom: 2,
-              fontWeight: 600,
-              fontSize: 13,
+              gap: 10, padding: open ? "10px 14px" : "10px",
+              borderRadius: "var(--radius)", marginBottom: 2,
+              fontWeight: 600, fontSize: 13,
               color: isActive ? "var(--accent)" : "var(--text2)",
               background: isActive ? "var(--accent-dim)" : "transparent",
               border: isActive ? "1px solid rgba(0,229,160,0.15)" : "1px solid transparent",
-              transition: "all 0.15s",
-              textDecoration: "none",
+              transition: "all 0.15s", textDecoration: "none",
             })}
           >
             <span style={{ fontSize: icon === 'in' ? 13 : 16, fontWeight: icon === 'in' ? 800 : 400, flexShrink: 0 }}>{icon}</span>

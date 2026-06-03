@@ -2,47 +2,69 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-// ── localStorage cache — persists across sessions, keyed by profileUrl ─
+// ── localStorage cache ─────────────────────────────────────────────────
 const CACHE_PREFIX = 'apify_summary_cache_';
 
-// ── In-memory tracker for in-flight requests ────────────────────────────
+// ── In-flight tracker ──────────────────────────────────────────────────
+// Each entry: { callbacks: [...], abortController: AbortController }
 const inFlight = {};
 
 function cacheGet(profileUrl) {
-  try {
-    const raw = localStorage.getItem(CACHE_PREFIX + profileUrl);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  try { const raw = localStorage.getItem(CACHE_PREFIX + profileUrl); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
-
 function cacheSet(profileUrl, data) {
-  try {
-    localStorage.setItem(CACHE_PREFIX + profileUrl, JSON.stringify(data));
-  } catch {}
+  try { localStorage.setItem(CACHE_PREFIX + profileUrl, JSON.stringify(data)); } catch {}
 }
-
 function cacheClear(profileUrl) {
-  try {
-    localStorage.removeItem(CACHE_PREFIX + profileUrl);
-  } catch {}
+  try { localStorage.removeItem(CACHE_PREFIX + profileUrl); } catch {}
 }
 
-// ── Module-level fetch — survives component unmount ──────────────────
+// Caller must have already initialised inFlight[url]
 async function startFetch(url) {
-  if (!inFlight[url]) return; // must be initialised by caller
+  const flight = inFlight[url];
+  if (!flight) return;
   try {
     const res = await fetch('/api/apify-summary/profile', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profileUrl: url, apifyToken: localStorage.getItem('apifyKey') || '' }),
+      body:    JSON.stringify({ profileUrl: url, apifyToken: localStorage.getItem('apifyKey') || '' }),
+      signal:  flight.abortController.signal,
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Summary failed');
     cacheSet(url, data);
     inFlight[url]?.callbacks.forEach(cb => cb(data, null));
-    delete inFlight[url];
   } catch (err) {
-    inFlight[url]?.callbacks.forEach(cb => cb(null, err.message));
+    if (err.name === 'AbortError') {
+      inFlight[url]?.callbacks.forEach(cb => cb(null, 'Cancelled'));
+    } else {
+      inFlight[url]?.callbacks.forEach(cb => cb(null, err.message));
+    }
+  } finally {
+    delete inFlight[url];
+  }
+}
+
+// Attach to (or start) a fetch. Returns cleanup fn to remove this callback.
+function attachFetch(url, onDone) {
+  if (!inFlight[url]) {
+    inFlight[url] = { callbacks: [], abortController: new AbortController() };
+    inFlight[url].callbacks.push(onDone);
+    startFetch(url);
+  } else {
+    inFlight[url].callbacks.push(onDone);
+  }
+  return () => {
+    if (inFlight[url]) {
+      inFlight[url].callbacks = inFlight[url].callbacks.filter(cb => cb !== onDone);
+    }
+  };
+}
+
+// Abort a running fetch for this url
+function abortFetch(url) {
+  if (inFlight[url]) {
+    inFlight[url].abortController.abort();
     delete inFlight[url];
   }
 }
@@ -56,15 +78,7 @@ function Tag({ label, color = 'info' }) {
   };
   const c = colors[color] || colors.info;
   return (
-    <span style={{
-      padding: '2px 8px',
-      background: c.bg,
-      border: `1px solid ${c.border}`,
-      borderRadius: 20,
-      fontSize: 10,
-      color: c.text,
-      fontFamily: 'var(--font-mono)',
-    }}>{label}</span>
+    <span style={{ padding: '2px 8px', background: c.bg, border: `1px solid ${c.border}`, borderRadius: 20, fontSize: 10, color: c.text, fontFamily: 'var(--font-mono)' }}>{label}</span>
   );
 }
 
@@ -72,12 +86,18 @@ function Tag({ label, color = 'info' }) {
 function Section({ label, children }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em' }}>
-        {label}
-      </div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em' }}>{label}</div>
       {children}
     </div>
   );
+}
+
+// ── Small button style helper ──────────────────────────────────────────
+function smBtn(variant = 'info') {
+  const c = variant === 'danger'
+    ? { color: '#ff4455', border: 'rgba(255,68,85,0.3)' }
+    : { color: 'var(--info)', border: 'rgba(77,159,255,0.3)' };
+  return { padding: '3px 10px', background: 'transparent', color: c.color, border: `1px solid ${c.border}`, borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, cursor: 'pointer' };
 }
 
 // ── Button ─────────────────────────────────────────────────────────────
@@ -131,37 +151,34 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
     const cached = cacheGet(profileUrl);
     if (cached) { setState('done'); setResult(cached); return; }
 
-    // fetch already running in background — attach callback to get result
-    if (inFlight[profileUrl]) {
-      setState('loading');
-      inFlight[profileUrl].callbacks.push((data, err) => {
-        if (!mountedRef.current) return;
-        if (err) { setError(err); setState('error'); }
-        else     { setResult(data); setState('done'); }
-      });
-      return;
-    }
-
-    // nothing running and no cache — start fresh
+    // FIX: use attachFetch — it correctly initialises inFlight before pushing the callback
     setState('loading');
-    inFlight[profileUrl] = { callbacks: [] };
-    inFlight[profileUrl].callbacks.push((data, err) => {
+    const cleanup = attachFetch(profileUrl, (data, err) => {
       if (!mountedRef.current) return;
+      if (err === 'Cancelled') { setState('idle'); return; }
       if (err) { setError(err); setState('error'); }
       else     { setResult(data); setState('done'); }
     });
-    startFetch(profileUrl);
+
+    return cleanup;
   }, [profileUrl]);
+
+  function stop() {
+    abortFetch(profileUrl);
+    setState('idle');
+  }
 
   function handleRefresh() {
     cacheClear(profileUrl);
-    delete inFlight[profileUrl];
-    setResult(null);
-    setError('');
-    setState('loading');
-    inFlight[profileUrl] = { callbacks: [] };
+    abortFetch(profileUrl); // cancel in-flight before restarting
+
+    setResult(null); setError(''); setState('loading');
+
+    // FIX: create flight entry and push callback BEFORE calling startFetch
+    inFlight[profileUrl] = { callbacks: [], abortController: new AbortController() };
     inFlight[profileUrl].callbacks.push((data, err) => {
       if (!mountedRef.current) return;
+      if (err === 'Cancelled') { setState('idle'); return; }
       if (err) { setError(err); setState('error'); }
       else     { setResult(data); setState('done'); }
     });
@@ -177,9 +194,9 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
           {state === 'idle' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
-                Click ✦ GET SUMMARY to fetch this profile
+                {result ? 'Fetch cancelled.' : 'Click ✦ GET SUMMARY to fetch this profile'}
               </span>
-              <button onClick={onClose} style={{ marginLeft: 'auto', padding: '3px 10px', background: 'transparent', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>✕ Close</button>
+              <button onClick={onClose} style={{ marginLeft: 'auto', ...smBtn() }}>✕ Close</button>
             </div>
           )}
 
@@ -187,7 +204,7 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
           {state === 'loading' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block', fontSize: 14, color: 'var(--accent)' }}>◌</span>
-              <div>
+              <div style={{ flex: 1 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>
                   Scraping LinkedIn profile for {name}...
                 </div>
@@ -195,7 +212,8 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
                   Takes 2–4 minutes — you can browse other rows while waiting
                 </div>
               </div>
-              <button onClick={onClose} style={{ marginLeft: 'auto', padding: '3px 10px', background: 'transparent', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>✕ Close</button>
+              <button onClick={stop}    style={smBtn('danger')}>✕ Stop</button>
+              <button onClick={onClose} style={smBtn()}>✕ Close</button>
             </div>
           )}
 
@@ -203,8 +221,8 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
           {state === 'error' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#ff4455' }}>✕ {error}</span>
-              <button onClick={handleRefresh} style={{ padding: '3px 10px', background: 'transparent', color: 'var(--info)', border: '1px solid rgba(77,159,255,0.3)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>Try again</button>
-              <button onClick={onClose}       style={{ padding: '3px 10px', background: 'transparent', color: 'var(--text3)', border: '1px solid var(--border)',              borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>✕ Close</button>
+              <button onClick={handleRefresh} style={smBtn()}>Try again</button>
+              <button onClick={onClose}       style={smBtn()}>✕ Close</button>
             </div>
           )}
 
@@ -221,58 +239,43 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
                 {/* ── Header ── */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                   <div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--info)', letterSpacing: '0.1em', marginBottom: 3 }}>
-                      AI SUMMARY
-                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--info)', letterSpacing: '0.1em', marginBottom: 3 }}>AI SUMMARY</div>
                     <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{name}</div>
                     {p.title && (
                       <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                        {p.title}{p.company ? ` @ ${p.company}` : ''}
-                        {p.location ? ` · ${p.location}` : ''}
+                        {p.title}{p.company ? ` @ ${p.company}` : ''}{p.location ? ` · ${p.location}` : ''}
                       </div>
                     )}
                     {p.email && (
-                      <div style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-                        ✉ {p.email}
-                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>✉ {p.email}</div>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={handleRefresh} style={{ padding: '3px 10px', background: 'transparent', color: 'var(--info)', border: '1px solid rgba(77,159,255,0.3)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>↺ Refresh</button>
-                    <button onClick={onClose}       style={{ padding: '3px 10px', background: 'transparent', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>✕ Close</button>
+                    <button onClick={handleRefresh} style={smBtn()}>↺ Refresh</button>
+                    <button onClick={onClose}       style={smBtn()}>✕ Close</button>
                   </div>
                 </div>
 
                 <div style={{ borderTop: '1px solid var(--border)' }} />
 
-                {/* ── Who they are ── */}
                 {s.summary && (
                   <Section label="WHO THEY ARE">
-                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px' }}>
-                      {s.summary}
-                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px' }}>{s.summary}</div>
                   </Section>
                 )}
 
-                {/* ── Career story ── */}
                 {s.careerStory && (
                   <Section label="CAREER STORY">
-                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px' }}>
-                      {s.careerStory}
-                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px' }}>{s.careerStory}</div>
                   </Section>
                 )}
 
-                {/* ── What they talk about ── */}
                 {s.activityNarrative && (
                   <Section label="WHAT THEY TALK ABOUT">
-                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px' }}>
-                      {s.activityNarrative}
-                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px' }}>{s.activityNarrative}</div>
                   </Section>
                 )}
 
-                {/* ── Expertise + Interests ── */}
                 {(s.expertise?.length > 0 || s.interests?.length > 0) && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {s.expertise?.length > 0 && (
@@ -294,12 +297,9 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
 
                 <div style={{ borderTop: '1px solid var(--border)' }} />
 
-                {/* ── Outreach section ── */}
                 {(o.hook || o.talkingPoints?.length > 0 || o.icebreakers?.length > 0) && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--warm, #ffb44d)', letterSpacing: '0.1em' }}>
-                      OUTREACH GUIDE
-                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--warm, #ffb44d)', letterSpacing: '0.1em' }}>OUTREACH GUIDE</div>
 
                     {o.hook && (
                       <Section label="OPENING HOOK">
@@ -347,16 +347,13 @@ export function SummaryRow({ profileUrl, name, colSpan, onClose }) {
 
                 <div style={{ borderTop: '1px solid var(--border)' }} />
 
-                {/* ── Footer stats ── */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>📝 {st.postsCount ?? 0} posts</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>💬 {st.commentsCount ?? 0} comments</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>👍 {st.reactedCount ?? 0} reactions</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>📊 {st.totalActivity ?? 0} total activity</span>
                   {result.meta?.scrapedAt && (
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>
-                      🕐 {new Date(result.meta.scrapedAt).toLocaleString()}
-                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text3)' }}>🕐 {new Date(result.meta.scrapedAt).toLocaleString()}</span>
                   )}
                 </div>
 

@@ -7,32 +7,36 @@ export default function Settings() {
     accountId, setAccountId,
     apolloKey, setApolloKey,
     hunterKey, setHunterKey,
-    apifyKey, setApifyKey,
+    apifyKey,  setApifyKey,
+    serperKey,    setSerperKey,
+    firecrawlKey, setFirecrawlKey,
     pbApiKey, setPbApiKey,
     pbActivityAgentId, setPbActivityAgentId,
-    pbProfileAgentId, setPbProfileAgentId,
-    pbLinkedinCookie, setPbLinkedinCookie,
- 
+    pbProfileAgentId,  setPbProfileAgentId,
+    pbLinkedinCookie,  setPbLinkedinCookie,
   } = useSettings();
 
-  const [csKeyInput, setCsKeyInput] = useState(connectSafelyKey);
-  const [csIdInput, setCsIdInput] = useState(accountId);
-  const [apolloInput, setApolloInput] = useState(apolloKey);
-  const [hunterInput, setHunterInput] = useState(hunterKey);
-  const [apifyInput, setApifyInput] = useState(apifyKey);
-
-  const [pbApiKeyInput, setPbApiKeyInput] = useState(pbApiKey);
-  const [pbActivityIdInput, setPbActivityIdInput] = useState(pbActivityAgentId);
+  const [csKeyInput,       setCsKeyInput]       = useState(connectSafelyKey);
+  const [csIdInput,        setCsIdInput]        = useState(accountId);
+  const [apolloInput,      setApolloInput]      = useState(apolloKey);
+  const [hunterInput,      setHunterInput]      = useState(hunterKey);
+  const [apifyInput,       setApifyInput]       = useState(apifyKey);
+  const [serperInput,      setSerperInput]      = useState(serperKey);
+  const [firecrawlInput,   setFirecrawlInput]   = useState(firecrawlKey);
+  const [pbApiKeyInput,    setPbApiKeyInput]    = useState(pbApiKey);
+  const [pbActivityIdInput,setPbActivityIdInput]= useState(pbActivityAgentId);
   const [pbProfileIdInput, setPbProfileIdInput] = useState(pbProfileAgentId);
-  const [pbCookieInput, setPbCookieInput] = useState(pbLinkedinCookie);
-  const [showPbKey, setShowPbKey] = useState(false);
-  const [showPbCookie, setShowPbCookie] = useState(false);
+  const [pbCookieInput,    setPbCookieInput]    = useState(pbLinkedinCookie);
 
-  const [showCsKey, setShowCsKey] = useState(false);
-  const [showApollo, setShowApollo] = useState(false);
-  const [showHunter, setShowHunter] = useState(false);
-  const [showApify, setShowApify] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [showCsKey,      setShowCsKey]      = useState(false);
+  const [showApollo,     setShowApollo]     = useState(false);
+  const [showHunter,     setShowHunter]     = useState(false);
+  const [showApify,      setShowApify]      = useState(false);
+  const [showSerper,     setShowSerper]     = useState(false);
+  const [showFirecrawl,  setShowFirecrawl]  = useState(false);
+  const [showPbKey,      setShowPbKey]      = useState(false);
+  const [showPbCookie,   setShowPbCookie]   = useState(false);
+  const [saved,          setSaved]          = useState(false);
 
   function handleSave() {
     setConnectSafelyKey(csKeyInput.trim());
@@ -40,11 +44,12 @@ export default function Settings() {
     setApolloKey(apolloInput.trim());
     setHunterKey(hunterInput.trim());
     setApifyKey(apifyInput.trim());
+    setSerperKey(serperInput.trim());
+    setFirecrawlKey(firecrawlInput.trim());
     setPbApiKey(pbApiKeyInput.trim());
     setPbActivityAgentId(pbActivityIdInput.trim());
     setPbProfileAgentId(pbProfileIdInput.trim());
     setPbLinkedinCookie(pbCookieInput.trim());
- 
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -92,49 +97,34 @@ export default function Settings() {
         </Field>
       </Section>
 
+      {/* Serper */}
+      <Section icon="🔎" title="Serper" subtitle="Google Search API — for company intelligence" style={{ marginBottom: 24 }}>
+        <Field label="API Key" hint="From serper.dev → Dashboard → API Key" required>
+          <PasswordInput value={serperInput} onChange={setSerperInput} show={showSerper} onToggle={() => setShowSerper(v => !v)} placeholder="your serper api key" />
+        </Field>
+      </Section>
+
+      {/* Firecrawl */}
+      <Section icon="🔥" title="Firecrawl" subtitle="Website scraper — for company intelligence" style={{ marginBottom: 24 }}>
+        <Field label="API Key" hint="From firecrawl.dev → Dashboard → API Key" required>
+          <PasswordInput value={firecrawlInput} onChange={setFirecrawlInput} show={showFirecrawl} onToggle={() => setShowFirecrawl(v => !v)} placeholder="fc-..." />
+        </Field>
+      </Section>
 
       {/* PhantomBuster */}
       <Section icon="🤖" title="PhantomBuster" subtitle="LinkedIn activity + profile scraper" style={{ marginBottom: 24 }}>
         <Field label="API Key" hint="From PhantomBuster dashboard → Settings → API" required>
-          <PasswordInput
-            value={pbApiKeyInput}
-            onChange={setPbApiKeyInput}
-            show={showPbKey}
-            onToggle={() => setShowPbKey(v => !v)}
-            placeholder="your phantombuster api key"
-          />
+          <PasswordInput value={pbApiKeyInput} onChange={setPbApiKeyInput} show={showPbKey} onToggle={() => setShowPbKey(v => !v)} placeholder="your phantombuster api key" />
         </Field>
-      
         <Field label="Activity Scraper Agent ID" hint="From your LinkedIn Activity Extractor phantom URL" required style={{ marginTop: 20 }}>
-          <input
-            type="text"
-            value={pbActivityIdInput}
-            onChange={e => setPbActivityIdInput(e.target.value)}
-            placeholder="e.g. 7513342814441012"
-            style={inputStyle}
-          />
+          <input type="text" value={pbActivityIdInput} onChange={e => setPbActivityIdInput(e.target.value)} placeholder="e.g. 7513342814441012" style={inputStyle} />
         </Field>
-      
         <Field label="Profile Scraper Agent ID" hint="From your LinkedIn Profile Scraper phantom URL" required style={{ marginTop: 20 }}>
-          <input
-            type="text"
-            value={pbProfileIdInput}
-            onChange={e => setPbProfileIdInput(e.target.value)}
-            placeholder="e.g. 1234567890123456"
-            style={inputStyle}
-          />
+          <input type="text" value={pbProfileIdInput} onChange={e => setPbProfileIdInput(e.target.value)} placeholder="e.g. 1234567890123456" style={inputStyle} />
         </Field>
-      
-        <Field label="LinkedIn Session Cookie (li_at)" hint="From your browser → DevTools → Application → Cookies → linkedin.com → li_at" required style={{ marginTop: 20 }}>
-          <PasswordInput
-            value={pbCookieInput}
-            onChange={setPbCookieInput}
-            show={showPbCookie}
-            onToggle={() => setShowPbCookie(v => !v)}
-            placeholder="your li_at cookie value"
-          />
+        <Field label="LinkedIn Session Cookie (li_at)" hint="From browser → DevTools → Application → Cookies → linkedin.com → li_at" required style={{ marginTop: 20 }}>
+          <PasswordInput value={pbCookieInput} onChange={setPbCookieInput} show={showPbCookie} onToggle={() => setShowPbCookie(v => !v)} placeholder="your li_at cookie value" />
         </Field>
-      
         <div style={{ marginTop: 16, padding: '12px 16px', background: 'rgba(255,185,0,0.08)', border: '1px solid rgba(255,185,0,0.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)', lineHeight: 1.8 }}>
           <div style={{ color: '#ffb900', fontWeight: 700, marginBottom: 4 }}>⚠ SETUP REQUIRED</div>
           <div>1. Create a "LinkedIn Activity Extractor" phantom in PhantomBuster</div>
@@ -146,10 +136,7 @@ export default function Settings() {
 
       {/* Save */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <button
-          onClick={handleSave}
-          style={{ padding: '11px 28px', background: 'var(--accent)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', letterSpacing: '0.05em', cursor: 'pointer' }}
-        >
+        <button onClick={handleSave} style={{ padding: '11px 28px', background: 'var(--accent)', color: '#000', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', letterSpacing: '0.05em', cursor: 'pointer' }}>
           SAVE SETTINGS
         </button>
         {saved && (
@@ -210,13 +197,8 @@ function PasswordInput({ value, onChange, show, onToggle, placeholder }) {
 }
 
 const inputStyle = {
-  width: '100%',
-  padding: '10px 14px',
-  background: 'var(--surface2)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)',
-  color: 'var(--text)',
-  fontSize: 13,
-  fontFamily: 'var(--font-mono)',
-  boxSizing: 'border-box',
+  width: '100%', padding: '10px 14px',
+  background: 'var(--surface2)', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)', color: 'var(--text)',
+  fontSize: 13, fontFamily: 'var(--font-mono)', boxSizing: 'border-box',
 };
