@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { pipelineRouter } from './routes/pipeline.js';
 import { exportRouter } from './routes/export.js';
 import { outreachRouter } from './routes/outreach.js';
@@ -8,6 +10,8 @@ import { mapsRouter } from './routes/maps.js';
 import { summaryRouter } from './routes/linkedin-summary.js';
 import { apifySummaryRouter } from './routes/apify-summary.js';
 import { companySummaryRouter } from './routes/company-summary.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -23,6 +27,12 @@ app.use('/api/company-summary', companySummaryRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+const FRONTEND_DIST = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(FRONTEND_DIST));
+app.get('/{*splat}', (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
 });
 
 const PORT = process.env.PORT || 3001;

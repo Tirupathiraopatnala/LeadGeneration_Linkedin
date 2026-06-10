@@ -1,0 +1,9 @@
+{
+  "name": "leadgen-linkedin",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "cd backend && node server.js",
+    "postinstall": "npm run build"
+  }
+}
