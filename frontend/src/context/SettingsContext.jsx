@@ -3,16 +3,11 @@ import { createContext, useContext, useState, useRef } from "react";
 const SettingsContext = createContext();
 
 export const DEFAULT_KEYWORDS = [
-  { keyword: "struggling with lead generation" },
-  { keyword: "can't find qualified leads" },
-  { keyword: "our sales pipeline is dry" },
-  { keyword: "looking for a prospecting tool" },
-  { keyword: "need more B2B leads" },
-  { keyword: "using AI for sales outreach" },
-  { keyword: "automate LinkedIn outreach" },
-  { keyword: "hiring SDR" },
-  { keyword: "scaling our sales team" },
-  { keyword: "just launched our product" },
+  { keyword: "Customer support chatbot" },
+  { keyword: "Generative AI" },
+  { keyword: "RAG Quality" },
+  { keyword: "Data pipeline latency" },
+  { keyword: "Looking for vendors" },
 ];
 
 export function SettingsProvider({ children }) {

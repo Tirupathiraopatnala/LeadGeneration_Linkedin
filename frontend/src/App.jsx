@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import LinkedIn from "./pages/LinkedIn";
-import Settings from "./pages/Settings";
+import Settings from "./pages/settings";
 import Outreach from "./pages/Outreach";
-import Maps from "./pages/Maps";
+import Maps from "./pages/maps";
 import HowItWorks from "./pages/HowItWorks";
 import Lookup from "./pages/Lookup";
 // CompanyLookup removed — company intelligence is now the 🏢 tab inside Lookup
