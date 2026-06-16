@@ -178,6 +178,10 @@ mapsRouter.post('/scrape', async (req, res) => {
 
   const allLeads = [];
 
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(': heartbeat\n\n');
+  }, 25000);
+
   try {
     send(res, 'start', { total: searches.length });
 
@@ -301,6 +305,7 @@ mapsRouter.post('/scrape', async (req, res) => {
   } catch (err) {
     send(res, 'error', { message: err.message });
   } finally {
+    clearInterval(heartbeat);
     completed = true;
     activeRuns.delete(clientRunId);
     res.end();
