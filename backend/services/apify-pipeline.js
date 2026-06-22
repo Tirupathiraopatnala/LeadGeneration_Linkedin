@@ -32,11 +32,13 @@ function isTruncated(text = '') {
 
 function classifyInteraction(interaction = '') {
   const i = interaction.toLowerCase();
-  if (i.includes('shared'))    return 'shared';
-  if (i.includes('commented')) return 'commented';
-  if (i.includes('reacted'))   return 'reacted';
-  if (i.includes('liked'))     return 'liked';
-  return 'unknown';
+  if (i.includes('shared') || i.includes('posted') || i.includes('published')) return 'shared';
+  if (i.includes('commented'))                                                  return 'commented';
+  if (i.includes('reacted') || i.includes('celebrated') || i.includes('supported') ||
+      i.includes('love') || i.includes('insightful') || i.includes('curious'))  return 'reacted';
+  if (i.includes('liked'))                                                       return 'liked';
+  console.warn(`[apify] Unknown interaction type: "${interaction}"`);
+  return 'reacted'; // fallback — surface it rather than lose it
 }
 
 function needsEnrichment(item) {
