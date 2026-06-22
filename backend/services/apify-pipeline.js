@@ -32,13 +32,26 @@ function isTruncated(text = '') {
 
 function classifyInteraction(interaction = '') {
   const i = interaction.toLowerCase();
-  if (i.includes('shared') || i.includes('posted') || i.includes('published')) return 'shared';
-  if (i.includes('commented'))                                                  return 'commented';
+  if (i.includes('shared') || i.includes('posted') || i.includes('published') ||
+      i.includes('reposted'))                                                    return 'shared';
+  if (i.includes('commented'))                                                   return 'commented';
   if (i.includes('reacted') || i.includes('celebrated') || i.includes('supported') ||
       i.includes('love') || i.includes('insightful') || i.includes('curious'))  return 'reacted';
   if (i.includes('liked'))                                                       return 'liked';
   console.warn(`[apify] Unknown interaction type: "${interaction}"`);
-  return 'reacted'; // fallback — surface it rather than lose it
+  return 'reacted';
+}
+
+function resolvePostUrl(link = '') {
+  if (!link) return null;
+  if (link.includes('session_redirect=')) {
+    try {
+      const match = link.match(/session_redirect=([^&]+)/);
+      if (match) return decodeURIComponent(match[1]);
+    } catch { }
+  }
+  if (link.startsWith('/')) return `https://www.linkedin.com${link}`;
+  return link;
 }
 
 function needsEnrichment(item) {
@@ -149,7 +162,7 @@ async function enrichActivity(items, apiKey) {
   const enriched = items.map(item => ({ ...item }));
 
   for (const { i, item } of toFetch) {
-    const url   = item.link;
+    const url   = resolvePostUrl(item.link);
     const itype = classifyInteraction(item.interaction || '');
 
     if (!url) {
@@ -212,7 +225,7 @@ function buildActivityFeed(enrichedItems) {
     return {
       interaction_type:      itype,
       interaction_raw:       item.interaction,
-      post_url:              item.link,
+      post_url:              resolvePostUrl(item.link),
       post_id:               item.id,
       post_image:            item.img,
       post_text:             postText,
